@@ -3,3 +3,5 @@ coverage
 node_modules
 convo-context.md
 fzf-convo-context.md
+docs
+.claude
