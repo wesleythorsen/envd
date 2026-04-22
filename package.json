@@ -1,0 +1,41 @@
+{
+  "name": "d-env",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "check": "npm run typecheck && npm run lint && npm run format:check",
+    "prepare": "npm run build"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.5.0",
+    "eslint": "^10.0.3",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.57.1"
+  },
+  "bin": {
+  },
+  "files": [
+    "dist",
+  ]
+}
