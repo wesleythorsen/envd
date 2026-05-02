@@ -6,7 +6,23 @@
       "Bash(npx prettier *)",
       "Bash(node *)",
       "Bash(git diff *)",
-      "Bash(git status *)"
+      "Bash(git status *)",
+      "Bash(npm test *)",
+      "Bash(git stash *)",
+      "Bash(npx eslint *)",
+      "Bash(npx vitest *)",
+      "Read(//Volumes/**)",
+      "Bash(mkdir -p /Volumes/d-env-test-check)",
+      "Bash(sudo mkdir *)",
+      "Bash(mount_webdav --help)",
+      "Bash(mount_webdav -S -v d-env \"http://127.0.0.1:58050/\" /private/tmp/d-env-test-mount)",
+      "Bash(echo \"Exit code: $?\")",
+      "Bash(mount)",
+      "Bash(echo \"Exit: $?\")",
+      "Bash(umount /private/tmp/d-env-test-mount)",
+      "Bash(mktemp -d /tmp/d-env-demo-XXXXXX)",
+      "Bash(D_ENV_HOME=/tmp/d-env-demo-VNgQf3 node /Users/WThorsen/repos/github.com/wesleythorsen/d-env/dist/cli/main.js daemon status)",
+      "Bash(D_ENV_HOME=/tmp/d-env-demo-VNgQf3 node /Users/WThorsen/repos/github.com/wesleythorsen/d-env/dist/cli/main.js daemon start)"
     ]
   }
 }

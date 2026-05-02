@@ -1,0 +1,34 @@
+export type ErrorCode =
+  | "daemon_unreachable"
+  | "usage_error"
+  | "provider_unreachable"
+  | "provider_auth"
+  | "commit_conflict"
+  | "mount_failed"
+  | "not_initialized"
+  | "internal"
+  | "bad_dotenv"
+  | "unauthorized"
+  | "not_found"
+  | "method_not_allowed";
+
+export class DEnvError extends Error {
+  readonly code: ErrorCode;
+  readonly details?: Record<string, unknown>;
+
+  constructor(
+    message: string,
+    opts: {
+      code: ErrorCode;
+      details?: Record<string, unknown>;
+      cause?: unknown;
+    },
+  ) {
+    super(message, { cause: opts.cause });
+    this.name = "DEnvError";
+    this.code = opts.code;
+    if (opts.details !== undefined) {
+      this.details = opts.details;
+    }
+  }
+}
