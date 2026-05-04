@@ -47,9 +47,33 @@ describe("openState", () => {
           .prepare<[], CountRow>("SELECT COUNT(*) AS count FROM _migrations")
           .get();
 
-        expect(row?.count).toBe(2);
+        expect(row?.count).toBe(3);
       } finally {
         second.close();
+      }
+    });
+  });
+
+  it("adds the provider_instances table and project foreign-key column", () => {
+    withTempDb((dbPath) => {
+      const store = openState(dbPath);
+      try {
+        const tableRow = store.db
+          .prepare<
+            [],
+            CountRow
+          >("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'provider_instances'")
+          .get();
+        const columnRows = store.db
+          .prepare<[], { name: string }>("PRAGMA table_info(projects)")
+          .all();
+
+        expect(tableRow?.count).toBe(1);
+        expect(columnRows.map((column) => column.name)).toContain(
+          "provider_instance_id",
+        );
+      } finally {
+        store.close();
       }
     });
   });

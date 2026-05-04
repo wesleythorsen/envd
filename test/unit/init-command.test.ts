@@ -41,6 +41,7 @@ class FakeControlClient implements ControlClient {
       id: "project-1",
       token: "token-1",
       path: input.path,
+      providerInstanceId: null,
       format: "dotenv",
       formatConfig: "{}",
       createdAt: 1,

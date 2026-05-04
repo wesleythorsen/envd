@@ -82,6 +82,7 @@ function projectDetail(projectDir: string): ProjectDetail {
     id: "project-1",
     token: "token-1",
     path: projectDir,
+    providerInstanceId: null,
     format: "dotenv",
     formatConfig: "{}",
     createdAt: 1,

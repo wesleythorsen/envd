@@ -39,6 +39,7 @@ export interface ProjectDetail {
   readonly id: string;
   readonly token: string;
   readonly path: string;
+  readonly providerInstanceId: string | null;
   readonly format: string;
   readonly formatConfig: string;
   readonly createdAt: number;

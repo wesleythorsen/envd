@@ -8,6 +8,7 @@ export interface Project {
   readonly id: string;
   readonly token: string;
   readonly path: string;
+  readonly providerInstanceId: string | null;
   readonly format: string;
   readonly formatConfig: string;
   readonly createdAt: number;
@@ -16,6 +17,7 @@ export interface Project {
 
 export interface CreateProjectInput {
   readonly path: string;
+  readonly providerInstanceId?: string;
   readonly format?: string;
   readonly formatConfig?: string;
 }
@@ -24,6 +26,7 @@ interface ProjectRow {
   id: string;
   token: string;
   path: string;
+  provider_instance_id: string | null;
   format: string;
   format_config: string;
   created_at: number;
@@ -35,11 +38,22 @@ function rowToProject(row: ProjectRow): Project {
     id: row.id,
     token: row.token,
     path: row.path,
+    providerInstanceId: row.provider_instance_id,
     format: row.format,
     formatConfig: row.format_config,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function providerInstanceExists(db: Database, id: string): boolean {
+  const row = db
+    .prepare<
+      [string],
+      { id: string }
+    >("SELECT id FROM provider_instances WHERE id = ?")
+    .get(id);
+  return row !== undefined;
 }
 
 function tokensEqual(a: string, b: string): boolean {
@@ -73,11 +87,28 @@ export class ProjectRepo {
       });
     }
 
+    const providerInstanceId = input.providerInstanceId ?? null;
+    if (providerInstanceId !== null && providerInstanceId.trim() === "") {
+      throw new DEnvError("providerInstanceId must be a non-empty string", {
+        code: "usage_error",
+      });
+    }
+    if (
+      providerInstanceId !== null &&
+      !providerInstanceExists(this.db, providerInstanceId)
+    ) {
+      throw new DEnvError("provider instance does not exist", {
+        code: "usage_error",
+        details: { providerInstanceId },
+      });
+    }
+
     const now = Date.now();
     const project: Project = {
       id: randomUUID(),
       token: randomBytes(32).toString("hex"),
       path: input.path,
+      providerInstanceId,
       format: input.format ?? "dotenv",
       formatConfig: input.formatConfig ?? "{}",
       createdAt: now,
@@ -88,15 +119,16 @@ export class ProjectRepo {
       .prepare(
         `
         INSERT INTO projects (
-          id, token, path, format, format_config, created_at, updated_at
+          id, token, path, provider_instance_id, format, format_config, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
       )
       .run(
         project.id,
         project.token,
         project.path,
+        project.providerInstanceId,
         project.format,
         project.formatConfig,
         project.createdAt,
@@ -110,7 +142,7 @@ export class ProjectRepo {
     const row = this.db
       .prepare<[string], ProjectRow>(
         `
-        SELECT id, token, path, format, format_config, created_at, updated_at
+        SELECT id, token, path, provider_instance_id, format, format_config, created_at, updated_at
         FROM projects
         WHERE id = ?
       `,
@@ -131,7 +163,7 @@ export class ProjectRepo {
     return this.db
       .prepare<[], ProjectRow>(
         `
-        SELECT id, token, path, format, format_config, created_at, updated_at
+        SELECT id, token, path, provider_instance_id, format, format_config, created_at, updated_at
         FROM projects
         ORDER BY rowid ASC
       `,

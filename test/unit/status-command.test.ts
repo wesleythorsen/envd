@@ -103,6 +103,7 @@ describe("getStatus", () => {
         id: "project-1",
         token: "token-1",
         path: dir,
+        providerInstanceId: null,
         format: "dotenv",
         formatConfig: "{}",
         createdAt: 1,
