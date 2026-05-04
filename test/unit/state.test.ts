@@ -47,7 +47,7 @@ describe("openState", () => {
           .prepare<[], CountRow>("SELECT COUNT(*) AS count FROM _migrations")
           .get();
 
-        expect(row?.count).toBe(3);
+        expect(row?.count).toBe(4);
       } finally {
         second.close();
       }
@@ -72,6 +72,42 @@ describe("openState", () => {
         expect(columnRows.map((column) => column.name)).toContain(
           "provider_instance_id",
         );
+      } finally {
+        store.close();
+      }
+    });
+  });
+
+  it("adds the staging table", () => {
+    withTempDb((dbPath) => {
+      const store = openState(dbPath);
+      try {
+        const tableRow = store.db
+          .prepare<
+            [],
+            CountRow
+          >("SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name = 'staging'")
+          .get();
+        const columnRows = store.db
+          .prepare<
+            [],
+            { name: string; type: string; notnull: number; pk: number }
+          >("PRAGMA table_info(staging)")
+          .all();
+
+        expect(tableRow?.count).toBe(1);
+        expect(
+          columnRows.map((column) => ({
+            name: column.name,
+            type: column.type,
+            notnull: column.notnull,
+            pk: column.pk,
+          })),
+        ).toEqual([
+          { name: "project_id", type: "TEXT", notnull: 1, pk: 1 },
+          { name: "updated_at", type: "INTEGER", notnull: 1, pk: 0 },
+          { name: "desired", type: "TEXT", notnull: 1, pk: 0 },
+        ]);
       } finally {
         store.close();
       }
