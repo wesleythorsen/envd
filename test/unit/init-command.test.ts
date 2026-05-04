@@ -12,16 +12,46 @@ import { tmpdir } from "node:os";
 import { initProject, type InitResult } from "../../src/cli/commands/init.js";
 import type {
   ControlClient,
+  CreateProviderInstanceInput,
   CreateProjectInput,
   CreateProjectResult,
+  ProviderInstanceDetail,
+  ProviderMetadata,
   ProjectDetail,
 } from "../../src/ipc/control-client.js";
+import { DEnvError } from "../../src/shared/errors.js";
+
+const localFileMetadata: ProviderMetadata = {
+  name: "local-file",
+  instanceConfigSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string", title: "JSON file path" },
+    },
+    required: ["path"],
+  },
+  credentialKeys: [],
+};
 
 class FakeControlClient implements ControlClient {
   private project: ProjectDetail | undefined;
+  private readonly providers: readonly ProviderMetadata[];
+  private providerInstances: ProviderInstanceDetail[];
   createProjectCalls = 0;
+  createProviderInstanceCalls = 0;
+  lastCreateProjectInput: CreateProjectInput | undefined;
+  lastCreateProviderInstanceInput: CreateProviderInstanceInput | undefined;
 
-  constructor(private readonly mountTarget: string) {}
+  constructor(
+    private readonly mountTarget: string,
+    opts: {
+      readonly providers?: readonly ProviderMetadata[];
+      readonly providerInstances?: readonly ProviderInstanceDetail[];
+    } = {},
+  ) {
+    this.providers = opts.providers ?? [localFileMetadata];
+    this.providerInstances = [...(opts.providerInstances ?? [])];
+  }
 
   health(): Promise<{ ok: boolean; version: string; uptimeSec: number }> {
     return Promise.resolve({ ok: true, version: "test", uptimeSec: 0 });
@@ -37,11 +67,12 @@ class FakeControlClient implements ControlClient {
 
   createProject(input: CreateProjectInput): Promise<CreateProjectResult> {
     this.createProjectCalls += 1;
+    this.lastCreateProjectInput = input;
     this.project = {
       id: "project-1",
       token: "token-1",
       path: input.path,
-      providerInstanceId: null,
+      providerInstanceId: input.providerInstanceId ?? null,
       format: "dotenv",
       formatConfig: "{}",
       createdAt: 1,
@@ -64,6 +95,50 @@ class FakeControlClient implements ControlClient {
 
   deleteProject(): Promise<void> {
     return Promise.resolve();
+  }
+
+  listProviders(): Promise<readonly ProviderMetadata[]> {
+    return Promise.resolve(this.providers);
+  }
+
+  createProviderInstance(
+    input: CreateProviderInstanceInput,
+  ): Promise<{ id: string }> {
+    this.createProviderInstanceCalls += 1;
+    this.lastCreateProviderInstanceInput = input;
+    const instance: ProviderInstanceDetail = {
+      id: `instance-${this.providerInstances.length + 1}`,
+      provider: input.provider,
+      name: input.name,
+      config: input.config ?? {},
+      createdAt: this.providerInstances.length + 1,
+    };
+    this.providerInstances = [...this.providerInstances, instance];
+    return Promise.resolve({ id: instance.id });
+  }
+
+  listProviderInstances(): Promise<readonly ProviderInstanceDetail[]> {
+    return Promise.resolve(this.providerInstances);
+  }
+
+  getProviderInstance(id: string): Promise<ProviderInstanceDetail> {
+    const instance = this.providerInstances.find(
+      (candidate) => candidate.id === id,
+    );
+    if (instance === undefined) {
+      return Promise.reject(
+        new DEnvError("provider instance not found", { code: "not_found" }),
+      );
+    }
+    return Promise.resolve(instance);
+  }
+
+  deleteProviderInstance(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  testProviderInstance(): Promise<{ ok: true }> {
+    return Promise.resolve({ ok: true });
   }
 
   shutdown(): Promise<void> {
@@ -95,13 +170,17 @@ describe("initProject", () => {
 
       const result: InitResult = await initProject(
         projectDir,
-        { yes: true },
+        { yes: true, providerInstance: "instance-1" },
         { client, ensureMount: false },
       );
 
       expect(result.status).toBe("initialized");
       expect(result.projectId).toBe("project-1");
       expect(client.createProjectCalls).toBe(1);
+      expect(client.lastCreateProjectInput).toEqual({
+        path: projectDir,
+        providerInstanceId: "instance-1",
+      });
       expect(readJson(join(projectDir, ".d-env.json"))).toEqual({
         projectId: "project-1",
         version: 1,
@@ -122,7 +201,7 @@ describe("initProject", () => {
       );
       await initProject(
         projectDir,
-        { yes: true },
+        { yes: true, providerInstance: "instance-1" },
         { client, ensureMount: false },
       );
       unlinkSync(join(projectDir, ".env"));
@@ -149,7 +228,7 @@ describe("initProject", () => {
 
       await initProject(
         projectDir,
-        { yes: true },
+        { yes: true, providerInstance: "instance-1" },
         { client, ensureMount: false },
       );
 
@@ -158,6 +237,141 @@ describe("initProject", () => {
         "utf-8",
       );
       expect(projectFile).not.toContain("token-1");
+    });
+  });
+
+  it("prompts for an existing provider instance and posts the chosen id", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = new FakeControlClient(
+        "/Volumes/d-env/p/project-1.token-1/.env",
+        {
+          providerInstances: [
+            {
+              id: "instance-existing",
+              provider: "local-file",
+              name: "Local secrets",
+              config: { path: "/tmp/secrets.json" },
+              createdAt: 1,
+            },
+          ],
+        },
+      );
+      const prompts: string[] = [];
+
+      await initProject(
+        projectDir,
+        { yes: true },
+        {
+          client,
+          ensureMount: false,
+          prompt: (question) => {
+            prompts.push(question);
+            return Promise.resolve("1");
+          },
+        },
+      );
+
+      expect(prompts).toEqual([
+        "Choose provider instance:\n1) Local secrets (local-file, instance-existing)\n2) Create new\nSelection",
+      ]);
+      expect(client.createProviderInstanceCalls).toBe(0);
+      expect(client.lastCreateProjectInput).toEqual({
+        path: projectDir,
+        providerInstanceId: "instance-existing",
+      });
+    });
+  });
+
+  it("creates a provider instance through provider-add prompts when none exist", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = new FakeControlClient(
+        "/Volumes/d-env/p/project-1.token-1/.env",
+      );
+      const answers = ["", "/tmp/secrets.json"];
+
+      await initProject(
+        projectDir,
+        { yes: true },
+        {
+          client,
+          ensureMount: false,
+          prompt: () => Promise.resolve(answers.shift() ?? ""),
+        },
+      );
+
+      expect(client.lastCreateProviderInstanceInput).toEqual({
+        provider: "local-file",
+        name: "local-file",
+        config: { path: "/tmp/secrets.json" },
+        credentials: {},
+      });
+      expect(client.lastCreateProjectInput).toEqual({
+        path: projectDir,
+        providerInstanceId: "instance-1",
+      });
+    });
+  });
+
+  it("creates a provider instance non-interactively from provider flags", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = new FakeControlClient(
+        "/Volumes/d-env/p/project-1.token-1/.env",
+      );
+
+      await initProject(
+        projectDir,
+        {
+          yes: true,
+          provider: "local-file",
+          providerInstanceName: "CI local",
+          configJson: '{"path":"/tmp/secrets.json"}',
+          credentialsJson: "{}",
+        },
+        {
+          client,
+          ensureMount: false,
+          prompt: () => Promise.reject(new Error("unexpected prompt")),
+        },
+      );
+
+      expect(client.lastCreateProviderInstanceInput).toEqual({
+        provider: "local-file",
+        name: "CI local",
+        config: { path: "/tmp/secrets.json" },
+        credentials: {},
+      });
+      expect(client.lastCreateProjectInput).toEqual({
+        path: projectDir,
+        providerInstanceId: "instance-1",
+      });
+    });
+  });
+
+  it("defaults the provider instance name for provider-driven scripting", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = new FakeControlClient(
+        "/Volumes/d-env/p/project-1.token-1/.env",
+      );
+
+      await initProject(
+        projectDir,
+        {
+          yes: true,
+          provider: "local-file",
+          configJson: '{"path":"/tmp/secrets.json"}',
+          credentialsJson: "{}",
+        },
+        {
+          client,
+          ensureMount: false,
+          prompt: () => Promise.reject(new Error("unexpected prompt")),
+        },
+      );
+
+      expect(client.lastCreateProviderInstanceInput).toMatchObject({
+        provider: "local-file",
+        name: "local-file",
+      });
     });
   });
 });
