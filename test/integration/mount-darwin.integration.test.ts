@@ -8,12 +8,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFile, rmdir, mkdir, rm } from "node:fs/promises";
+import { readFile, rmdir, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startWebdavServer } from "../../src/daemon/webdav/server.js";
 import { DarwinMountAdapter } from "../../src/mount/darwin.js";
 import { openState } from "../../src/core/state.js";
 import { ProjectRepo } from "../../src/core/project.js";
+import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
 
 const isDarwin = process.platform === "darwin";
 
@@ -28,12 +29,31 @@ describe("darwin mount adapter (integration)", () => {
       const mountPath = `/private/tmp/d-env-it-${process.pid}-${rand}`;
       const statePath = `/private/tmp/d-env-it-${process.pid}-${rand}.db`;
       const projectPath = `/private/tmp/d-env-it-${process.pid}-${rand}-project`;
+      const providerPath = `/private/tmp/d-env-it-${process.pid}-${rand}-secrets.json`;
       await mkdir(projectPath);
+      await writeFile(
+        providerPath,
+        JSON.stringify({ HELLO: "world" }),
+        "utf-8",
+      );
 
       const state = openState(statePath);
       const projectRepo = new ProjectRepo(state.db);
-      const project = projectRepo.create({ path: projectPath });
-      const server = await startWebdavServer({ port: 0, projectRepo });
+      const providerInstanceRepo = new ProviderInstanceRepo(state.db);
+      const providerInstance = providerInstanceRepo.create({
+        provider: "local-file",
+        name: "Mount test fixture",
+        config: JSON.stringify({ path: providerPath }),
+      });
+      const project = projectRepo.create({
+        path: projectPath,
+        providerInstanceId: providerInstance.id,
+      });
+      const server = await startWebdavServer({
+        port: 0,
+        projectRepo,
+        providerInstanceRepo,
+      });
       const url = `http://127.0.0.1:${server.port}/`;
 
       const adapter = new DarwinMountAdapter();
@@ -48,7 +68,7 @@ describe("darwin mount adapter (integration)", () => {
           ".env",
         );
         const content = await readFile(filePath, "utf-8");
-        expect(content).toContain(`# d-env project ${project.id}\n`);
+        expect(content).toBe("HELLO=world\n");
       } finally {
         // Best-effort unmount and cleanup — always runs even if the read fails.
         try {
@@ -68,6 +88,7 @@ describe("darwin mount adapter (integration)", () => {
         }
         state.close();
         await rm(statePath, { force: true });
+        await rm(providerPath, { force: true });
         await server.close();
       }
     },

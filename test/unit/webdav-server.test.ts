@@ -1,31 +1,99 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { request } from "undici";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import {
   startWebdavServer,
   type WebdavServerHandle,
 } from "../../src/daemon/webdav/server.js";
 import { openState, type StateStore } from "../../src/core/state.js";
 import { ProjectRepo, type Project } from "../../src/core/project.js";
+import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
+import { createCache } from "../../src/core/cache.js";
 
 let server: WebdavServerHandle;
 let base: string;
 let state: StateStore;
 let tempDir: string;
 let project: Project;
+let alwaysQuotedProject: Project;
+let failingProject: Project;
 let projectHref: string;
+let alwaysQuotedProjectHref: string;
+let failingProjectHref: string;
+let providerFile: string;
+
+const FETCHED_AT = Date.UTC(2026, 0, 2, 3, 4, 5);
+const EXPECTED_ENV =
+  'API_KEY=abc123\nMULTILINE="line\\nbreak"\nSPACED="hello world"\n';
+const EXPECTED_ALWAYS_QUOTED_ENV =
+  'API_KEY="abc123"\nMULTILINE="line\\nbreak"\nSPACED="hello world"\n';
+
+function sha256Etag(bytes: string): string {
+  return `"${createHash("sha256").update(bytes).digest("hex")}"`;
+}
 
 beforeAll(async () => {
   tempDir = mkdtempSync(join(tmpdir(), "d-env-webdav-test-"));
   const projectPath = join(tempDir, "project");
+  const alwaysQuotedProjectPath = join(tempDir, "project-always-quoted");
+  const failingProjectPath = join(tempDir, "project-failing");
+  providerFile = join(tempDir, "secrets.json");
+  const failingProviderFile = join(tempDir, "bad-secrets.json");
   mkdirSync(projectPath);
+  mkdirSync(alwaysQuotedProjectPath);
+  mkdirSync(failingProjectPath);
+  writeFileSync(
+    providerFile,
+    JSON.stringify({
+      SPACED: "hello world",
+      API_KEY: "abc123",
+      MULTILINE: "line\nbreak",
+    }),
+    "utf-8",
+  );
+  writeFileSync(failingProviderFile, JSON.stringify({ BAD: 1 }), "utf-8");
+
   state = openState(join(tempDir, "state.db"));
   const projectRepo = new ProjectRepo(state.db);
-  project = projectRepo.create({ path: projectPath });
+  const providerInstanceRepo = new ProviderInstanceRepo(state.db);
+  const providerInstance = providerInstanceRepo.create({
+    provider: "local-file",
+    name: "WebDAV fixture",
+    config: JSON.stringify({ path: providerFile }),
+  });
+  const failingProviderInstance = providerInstanceRepo.create({
+    provider: "local-file",
+    name: "Broken WebDAV fixture",
+    config: JSON.stringify({ path: failingProviderFile }),
+  });
+  project = projectRepo.create({
+    path: projectPath,
+    providerInstanceId: providerInstance.id,
+  });
+  alwaysQuotedProject = projectRepo.create({
+    path: alwaysQuotedProjectPath,
+    providerInstanceId: providerInstance.id,
+    formatConfig: JSON.stringify({
+      quote: "always",
+      sortKeys: "alphabetical",
+    }),
+  });
+  failingProject = projectRepo.create({
+    path: failingProjectPath,
+    providerInstanceId: failingProviderInstance.id,
+  });
   projectHref = `/p/${project.id}.${project.token}`;
-  server = await startWebdavServer({ port: 0, projectRepo });
+  alwaysQuotedProjectHref = `/p/${alwaysQuotedProject.id}.${alwaysQuotedProject.token}`;
+  failingProjectHref = `/p/${failingProject.id}.${failingProject.token}`;
+  server = await startWebdavServer({
+    port: 0,
+    projectRepo,
+    providerInstanceRepo,
+    cache: createCache({ now: () => FETCHED_AT }),
+  });
   base = `http://127.0.0.1:${server.port}`;
 });
 
@@ -163,16 +231,23 @@ describe("PROPFIND project .env", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET project .env", () => {
-  it("returns placeholder project content with correct headers", async () => {
+  it("renders provider secrets as dotenv with correct headers", async () => {
     const res = await request(`${base}${projectHref}/.env`);
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toContain("text/plain");
     expect(res.headers["content-type"]).toContain("utf-8");
-    expect(res.headers["last-modified"]).toBeDefined();
-    expect(res.headers["etag"]).toBeDefined();
+    expect(res.headers["last-modified"]).toBe(
+      new Date(FETCHED_AT).toUTCString(),
+    );
+    expect(res.headers["etag"]).toBe(sha256Etag(EXPECTED_ENV));
     const body = await res.body.text();
-    expect(body).toContain(`# d-env project ${project.id}\n`);
-    expect(body).toContain(`# staged at: ${project.updatedAt}\n`);
+    expect(body).toBe(EXPECTED_ENV);
+  });
+
+  it("uses project formatConfig when rendering", async () => {
+    const res = await request(`${base}${alwaysQuotedProjectHref}/.env`);
+    expect(res.statusCode).toBe(200);
+    expect(await res.body.text()).toBe(EXPECTED_ALWAYS_QUOTED_ENV);
   });
 
   it("Content-Length matches actual body", async () => {
@@ -186,6 +261,45 @@ describe("GET project .env", () => {
     const res = await request(`${base}${projectHref}/.env`);
     await res.body.dump();
     expect(res.headers["transfer-encoding"]).toBeUndefined();
+  });
+
+  it("supports If-None-Match revalidation", async () => {
+    const first = await request(`${base}${projectHref}/.env`);
+    expect(first.statusCode).toBe(200);
+    const etag = first.headers["etag"];
+    await first.body.dump();
+    expect(etag).toBe(sha256Etag(EXPECTED_ENV));
+
+    const second = await request(`${base}${projectHref}/.env`, {
+      headers: { "If-None-Match": String(etag) },
+    });
+    expect(second.statusCode).toBe(304);
+    expect(second.headers["etag"]).toBe(etag);
+    expect(second.headers["last-modified"]).toBe(
+      new Date(FETCHED_AT).toUTCString(),
+    );
+    await second.body.dump();
+  });
+
+  it("serves cached provider snapshots within TTL", async () => {
+    const first = await request(`${base}${projectHref}/.env`);
+    expect(await first.body.text()).toBe(EXPECTED_ENV);
+
+    writeFileSync(
+      providerFile,
+      JSON.stringify({ API_KEY: "changed" }),
+      "utf-8",
+    );
+
+    const second = await request(`${base}${projectHref}/.env`);
+    expect(await second.body.text()).toBe(EXPECTED_ENV);
+  });
+
+  it("maps provider fetch failures to 503", async () => {
+    const res = await request(`${base}${failingProjectHref}/.env`);
+    expect(res.statusCode).toBe(503);
+    expect(res.headers["x-denv-error"]).toBe("provider_unreachable");
+    await res.body.dump();
   });
 
   it("wrong project token returns 404", async () => {
@@ -224,7 +338,7 @@ describe("HEAD /hello/.env", () => {
     expect(headRes.headers["last-modified"]).toBe(
       getRes.headers["last-modified"],
     );
-    expect(getBody).toContain(`# d-env project ${project.id}\n`);
+    expect(getBody).toBe(EXPECTED_ENV);
   });
 });
 

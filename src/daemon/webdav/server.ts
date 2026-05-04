@@ -7,13 +7,32 @@ import type { Server } from "node:http";
 import { createHash } from "node:crypto";
 import { createLogger } from "../../shared/logger.js";
 import type { Project, ProjectRepo } from "../../core/project.js";
+import { createCache, type Cache, type CacheResult } from "../../core/cache.js";
+import type {
+  ProviderInstanceRecord,
+  ProviderInstanceRepo,
+} from "../../core/provider-instance.js";
+import { secretsKind, type FormatConfig } from "../../kinds/secrets/index.js";
+import { findProvider } from "../../providers/registry.js";
+import type {
+  KeychainAdapter,
+  Provider,
+  ProviderContext,
+  ProviderInstance,
+  SecretMap,
+} from "../../providers/base.js";
+import { InMemoryKeychainAdapter } from "../../providers/keychain.js";
 
 const log = createLogger("daemon/webdav");
+const DEFAULT_CACHE_TTL_MS = 60_000;
 
 export interface WebdavServerOpts {
   /** TCP port to bind. Pass 0 for an ephemeral port (tests). Default: 1911. */
   port?: number;
   projectRepo: ProjectRepo;
+  providerInstanceRepo?: ProviderInstanceRepo;
+  keychain?: KeychainAdapter;
+  cache?: Cache<SecretMap>;
 }
 
 export interface WebdavServerHandle {
@@ -29,6 +48,13 @@ interface RenderedProjectFile {
   etag: string;
 }
 
+interface WebdavRuntime {
+  readonly projectRepo: ProjectRepo;
+  readonly providerInstanceRepo: ProviderInstanceRepo | undefined;
+  readonly keychain: KeychainAdapter | undefined;
+  readonly cache: Cache<SecretMap>;
+}
+
 type ProjectPath =
   | { kind: "root" }
   | { kind: "projects-root" }
@@ -36,13 +62,167 @@ type ProjectPath =
   | { kind: "project-env"; id: string; token: string }
   | { kind: "unknown" };
 
-function renderProjectFile(project: Project): RenderedProjectFile {
-  const text = `# d-env project ${project.id}\n# staged at: ${project.updatedAt}\n`;
-  const bytes = Buffer.from(text, "utf-8");
+class ProviderUnavailableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ProviderUnavailableError";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseJson(raw: string, label: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (err: unknown) {
+    throw new Error(`${label} is not valid JSON`, { cause: err });
+  }
+}
+
+function parseProjectFormat(project: Project): FormatConfig {
+  if (project.format !== "dotenv") {
+    throw new Error(`unsupported project format: ${project.format}`);
+  }
+
+  const parsed = parseJson(project.formatConfig, "project formatConfig");
+  if (!isRecord(parsed)) {
+    throw new Error("project formatConfig must be a JSON object");
+  }
+
+  return {
+    format: "dotenv",
+    options: parsed,
+  };
+}
+
+function parseProviderConfig(record: ProviderInstanceRecord): unknown {
+  return parseJson(record.config, "provider instance config");
+}
+
+function readCacheTtlMs(config: unknown): number {
+  if (!isRecord(config)) {
+    return DEFAULT_CACHE_TTL_MS;
+  }
+
+  const raw = config["cacheTtlMs"] ?? config["ttlMs"];
+  if (raw === undefined) {
+    return DEFAULT_CACHE_TTL_MS;
+  }
+
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+    throw new Error(
+      "provider instance cache TTL must be a non-negative number",
+    );
+  }
+
+  return raw;
+}
+
+function scopedKeychain(
+  keychain: KeychainAdapter,
+  providerInstanceId: string,
+): KeychainAdapter {
+  return {
+    set(_service, account, secret) {
+      return keychain.set(providerInstanceId, account, secret);
+    },
+    get(_service, account) {
+      return keychain.get(providerInstanceId, account);
+    },
+    delete(_service, account) {
+      return keychain.delete(providerInstanceId, account);
+    },
+  };
+}
+
+function providerContext(
+  keychain: KeychainAdapter,
+  providerInstanceId: string,
+  providerName: string,
+): ProviderContext {
+  return {
+    keychain: scopedKeychain(keychain, providerInstanceId),
+    logger: createLogger(`providers/${providerName}`),
+    fetch: globalThis.fetch,
+  };
+}
+
+async function fetchFromProvider(
+  provider: Provider,
+  keychain: KeychainAdapter,
+  record: ProviderInstanceRecord,
+  config: unknown,
+): Promise<SecretMap> {
+  const instance: ProviderInstance = await provider.create(
+    providerContext(keychain, record.id, provider.name),
+    config,
+  );
+
+  try {
+    return await instance.fetch();
+  } finally {
+    if (instance.close !== undefined) {
+      await instance.close();
+    }
+  }
+}
+
+async function readProviderSnapshot(
+  runtime: WebdavRuntime,
+  project: Project,
+): Promise<CacheResult<SecretMap>> {
+  try {
+    if (project.providerInstanceId === null) {
+      throw new Error("project has no provider instance");
+    }
+
+    if (runtime.providerInstanceRepo === undefined) {
+      throw new Error("provider instance registry is not available");
+    }
+
+    const keychain = runtime.keychain;
+    if (keychain === undefined) {
+      throw new Error("keychain adapter is not available");
+    }
+
+    const record = runtime.providerInstanceRepo.get(project.providerInstanceId);
+    if (record === undefined) {
+      throw new Error("provider instance not found");
+    }
+
+    const provider = findProvider(record.provider);
+    if (provider === undefined) {
+      throw new Error("provider is not registered");
+    }
+
+    const config = parseProviderConfig(record);
+    const ttlMs = readCacheTtlMs(config);
+    return await runtime.cache.get(
+      project.id,
+      () => fetchFromProvider(provider, keychain, record, config),
+      { ttlMs },
+    );
+  } catch (err: unknown) {
+    throw new ProviderUnavailableError("provider is unreachable", {
+      cause: err,
+    });
+  }
+}
+
+async function renderProjectFile(
+  runtime: WebdavRuntime,
+  project: Project,
+): Promise<RenderedProjectFile> {
+  const format = parseProjectFormat(project);
+  const snapshot = await readProviderSnapshot(runtime, project);
+  const bytes = Buffer.from(secretsKind.render(snapshot.value, format));
   const hash = createHash("sha256").update(bytes).digest("hex");
+
   return {
     bytes,
-    lastModified: new Date(project.updatedAt).toUTCString(),
+    lastModified: new Date(snapshot.fetchedAt).toUTCString(),
     etag: `"${hash}"`,
   };
 }
@@ -67,8 +247,11 @@ function collectionProps(displayName: string): string {
   );
 }
 
-function fileProps(project: Project): string {
-  const rendered = renderProjectFile(project);
+async function fileProps(
+  runtime: WebdavRuntime,
+  project: Project,
+): Promise<string> {
+  const rendered = await renderProjectFile(runtime, project);
   return davPropstat(
     `        <D:resourcetype/>\n        <D:displayname>.env</D:displayname>\n        <D:getcontenttype>text/plain; charset=utf-8</D:getcontenttype>\n        <D:getcontentlength>${rendered.bytes.length}</D:getcontentlength>\n        <D:getlastmodified>${rendered.lastModified}</D:getlastmodified>\n        <D:getetag>${rendered.etag}</D:getetag>\n`,
   );
@@ -140,14 +323,15 @@ function loadProject(
   return projectRepo.getByToken(id, token);
 }
 
-function handlePropfind(
+async function handlePropfind(
   req: IncomingMessage,
   res: ServerResponse,
   path: string,
-  projectRepo: ProjectRepo,
-): void {
+  runtime: WebdavRuntime,
+): Promise<void> {
   const depth = parseDepth(req);
   const parsedPath = parseProjectPath(path);
+  const projectRepo = runtime.projectRepo;
 
   let body = "";
 
@@ -182,7 +366,7 @@ function handlePropfind(
         collectionProps(`${project.id}.${project.token}`),
       );
       if (depth >= 1) {
-        body += davResponse(`${href}.env`, fileProps(project));
+        body += davResponse(`${href}.env`, await fileProps(runtime, project));
       }
       break;
     }
@@ -195,7 +379,7 @@ function handlePropfind(
       }
       body += davResponse(
         `/p/${project.id}.${project.token}/.env`,
-        fileProps(project),
+        await fileProps(runtime, project),
       );
       break;
     }
@@ -214,12 +398,24 @@ function handlePropfind(
   res.end(xmlBuf);
 }
 
-function handleGet(
+async function handleGet(
+  req: IncomingMessage,
   res: ServerResponse,
+  runtime: WebdavRuntime,
   project: Project,
   sendBody: boolean,
-): void {
-  const rendered = renderProjectFile(project);
+): Promise<void> {
+  const rendered = await renderProjectFile(runtime, project);
+
+  if (ifNoneMatchMatches(req.headers["if-none-match"], rendered.etag)) {
+    res.writeHead(304, {
+      "Last-Modified": rendered.lastModified,
+      ETag: rendered.etag,
+    });
+    res.end();
+    return;
+  }
+
   res.writeHead(200, {
     "Content-Type": "text/plain; charset=utf-8",
     "Content-Length": rendered.bytes.length,
@@ -231,6 +427,25 @@ function handleGet(
   } else {
     res.end();
   }
+}
+
+function ifNoneMatchMatches(
+  rawHeader: string | string[] | undefined,
+  etag: string,
+): boolean {
+  if (rawHeader === undefined) {
+    return false;
+  }
+
+  const candidates = Array.isArray(rawHeader)
+    ? rawHeader.flatMap((value) => value.split(","))
+    : rawHeader.split(",");
+
+  return candidates.some((candidate) => {
+    const trimmed = candidate.trim();
+    const normalized = trimmed.startsWith("W/") ? trimmed.slice(2) : trimmed;
+    return normalized === "*" || normalized === etag;
+  });
 }
 
 function handleNotFound(res: ServerResponse): void {
@@ -250,6 +465,36 @@ function handleMethodNotAllowed(res: ServerResponse): void {
   res.end();
 }
 
+function handleProviderUnavailable(res: ServerResponse, err: unknown): void {
+  log.warn({
+    msg: "webdav provider read failed",
+    data: { error: String(err) },
+  });
+
+  const body = Buffer.from("Provider Unreachable", "utf-8");
+  res.writeHead(503, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Content-Length": body.length,
+    "X-DEnv-Error": "provider_unreachable",
+  });
+  res.end(body);
+}
+
+function handleInternalError(res: ServerResponse, err: unknown): void {
+  log.error({
+    msg: "webdav internal error",
+    data: { error: String(err) },
+  });
+
+  const body = Buffer.from("Internal Server Error", "utf-8");
+  res.writeHead(500, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Content-Length": body.length,
+    "X-DEnv-Error": "internal",
+  });
+  res.end(body);
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -264,14 +509,15 @@ function parsePath(rawUrl: string | undefined): string {
   }
 }
 
-function dispatch(
-  projectRepo: ProjectRepo,
+async function dispatch(
+  runtime: WebdavRuntime,
   req: IncomingMessage,
   res: ServerResponse,
-): void {
+): Promise<void> {
   const method = req.method ?? "";
   // Normalize path: strip query string, decode %xx.
   const path = parsePath(req.url);
+  const projectRepo = runtime.projectRepo;
 
   log.debug({ msg: "webdav request", data: { method, path } });
 
@@ -282,7 +528,15 @@ function dispatch(
   }
 
   if (method === "PROPFIND") {
-    handlePropfind(req, res, path, projectRepo);
+    try {
+      await handlePropfind(req, res, path, runtime);
+    } catch (err: unknown) {
+      if (err instanceof ProviderUnavailableError) {
+        handleProviderUnavailable(res, err);
+      } else {
+        handleInternalError(res, err);
+      }
+    }
     return;
   }
 
@@ -291,7 +545,15 @@ function dispatch(
     if (parsedPath.kind === "project-env") {
       const project = loadProject(projectRepo, parsedPath.id, parsedPath.token);
       if (project !== undefined) {
-        handleGet(res, project, method === "GET");
+        try {
+          await handleGet(req, res, runtime, project, method === "GET");
+        } catch (err: unknown) {
+          if (err instanceof ProviderUnavailableError) {
+            handleProviderUnavailable(res, err);
+          } else {
+            handleInternalError(res, err);
+          }
+        }
         return;
       }
       handleNotFound(res);
@@ -313,11 +575,30 @@ export function startWebdavServer(
   opts: WebdavServerOpts,
 ): Promise<WebdavServerHandle> {
   const bindPort = opts.port ?? 1911;
-  const projectRepo = opts.projectRepo;
+  const runtime: WebdavRuntime = {
+    projectRepo: opts.projectRepo,
+    providerInstanceRepo: opts.providerInstanceRepo,
+    keychain:
+      opts.keychain ??
+      (opts.providerInstanceRepo === undefined
+        ? undefined
+        : new InMemoryKeychainAdapter()),
+    cache: opts.cache ?? createCache<SecretMap>(),
+  };
 
   return new Promise((resolve, reject) => {
     const server: Server = createServer((req, res) => {
-      dispatch(projectRepo, req, res);
+      void dispatch(runtime, req, res).catch((err: unknown) => {
+        if (!res.headersSent) {
+          handleInternalError(res, err);
+        } else {
+          log.error({
+            msg: "webdav request failed after headers were sent",
+            data: { error: String(err) },
+          });
+          res.destroy(err instanceof Error ? err : undefined);
+        }
+      });
     });
 
     server.once("error", reject);

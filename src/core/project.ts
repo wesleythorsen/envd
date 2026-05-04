@@ -4,6 +4,11 @@ import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Database } from "better-sqlite3";
 import { DEnvError } from "../shared/errors.js";
 
+const DEFAULT_FORMAT_CONFIG = JSON.stringify({
+  quote: "when-needed",
+  sortKeys: "alphabetical",
+});
+
 export interface Project {
   readonly id: string;
   readonly token: string;
@@ -110,7 +115,7 @@ export class ProjectRepo {
       path: input.path,
       providerInstanceId,
       format: input.format ?? "dotenv",
-      formatConfig: input.formatConfig ?? "{}",
+      formatConfig: input.formatConfig ?? DEFAULT_FORMAT_CONFIG,
       createdAt: now,
       updatedAt: now,
     };

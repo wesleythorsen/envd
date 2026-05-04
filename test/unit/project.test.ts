@@ -45,7 +45,9 @@ describe("ProjectRepo", () => {
       expect(project.path).toBe(projectPath);
       expect(project.providerInstanceId).toBeNull();
       expect(project.format).toBe("dotenv");
-      expect(project.formatConfig).toBe("{}");
+      expect(project.formatConfig).toBe(
+        JSON.stringify({ quote: "when-needed", sortKeys: "alphabetical" }),
+      );
 
       expect(repo.get(project.id)).toEqual(project);
     });

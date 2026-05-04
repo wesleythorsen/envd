@@ -179,7 +179,7 @@ async function main(): Promise<void> {
   const shutdownBox: { fn?: () => void } = {};
 
   const [webdav, control] = await Promise.all([
-    startWebdavServer({ projectRepo }),
+    startWebdavServer({ projectRepo, providerInstanceRepo, keychain }),
     startControlServer({
       token,
       projectRepo,
