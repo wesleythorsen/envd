@@ -23,7 +23,7 @@ describe("secretsKind", () => {
     expect(diff).toEqual({
       added: { D: "add" },
       modified: { A: { before: "old", after: "new" } },
-      deleted: ["B"],
+      deleted: { B: "delete" },
     });
   });
 
@@ -33,7 +33,7 @@ describe("secretsKind", () => {
       {
         added: { D: "add" },
         modified: { A: { before: "old", after: "new" } },
-        deleted: ["B"],
+        deleted: { B: "delete" },
       },
     );
 
@@ -45,7 +45,7 @@ describe("secretsKind", () => {
       diffToChangeSet({
         added: { D: "add" },
         modified: { A: { before: "old", after: "new" } },
-        deleted: ["B"],
+        deleted: { B: "delete" },
       }),
     ).toEqual({
       upserts: { A: "new", D: "add" },
