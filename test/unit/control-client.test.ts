@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openState, type StateStore } from "../../src/core/state.js";
 import { ProjectRepo } from "../../src/core/project.js";
+import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
 
 // ---------------------------------------------------------------------------
 // Test server setup
@@ -116,6 +117,79 @@ describe("project APIs happy path", () => {
     expect(detail.id).toBe(created.id);
     expect(detail.path).toBe(projectPath);
     expect(detail.mountPath).toBe(created.mountPath);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// provider APIs — happy path
+// ---------------------------------------------------------------------------
+
+describe("provider APIs happy path", () => {
+  const providerToken = generateToken();
+  let providerServer: ControlServerHandle;
+  let providerClient: ControlClient;
+  let state: StateStore;
+  let tempDir: string;
+  let providerFile: string;
+
+  beforeAll(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "d-env-client-providers-"));
+    providerFile = join(tempDir, "secrets.json");
+    state = openState(join(tempDir, "state.db"));
+    providerServer = await startControlServer({
+      port: 0,
+      token: providerToken,
+      projectRepo: new ProjectRepo(state.db),
+      providerInstanceRepo: new ProviderInstanceRepo(state.db),
+    });
+    providerClient = createControlClient({
+      baseUrl: `http://127.0.0.1:${providerServer.port}`,
+      token: providerToken,
+    });
+  });
+
+  afterAll(async () => {
+    await providerServer.close();
+    state.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("lists providers and creates, tests, gets, lists, and deletes a local-file instance", async () => {
+    const providers = await providerClient.listProviders();
+    expect(providers.map((provider) => provider.name)).toEqual(["local-file"]);
+    expect(providers[0]?.credentialKeys).toEqual([]);
+
+    const created = await providerClient.createProviderInstance({
+      provider: "local-file",
+      name: "Local secrets",
+      config: { path: providerFile },
+      credentials: {},
+    });
+    expect(created.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+
+    const testResult = await providerClient.testProviderInstance(created.id);
+    expect(testResult).toEqual({ ok: true });
+
+    const detail = await providerClient.getProviderInstance(created.id);
+    expect(detail).toMatchObject({
+      id: created.id,
+      provider: "local-file",
+      name: "Local secrets",
+      config: { path: providerFile },
+    });
+
+    const instances = await providerClient.listProviderInstances();
+    expect(instances.map((instance) => instance.id)).toEqual([created.id]);
+    expect(JSON.stringify(instances)).not.toContain("credentials");
+
+    await providerClient.deleteProviderInstance(created.id);
+    await expect(
+      providerClient.getProviderInstance(created.id),
+    ).rejects.toSatisfy((err: unknown) => {
+      return err instanceof DEnvError && err.code === "not_found";
+    });
   });
 });
 

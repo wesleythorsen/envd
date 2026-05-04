@@ -9,7 +9,18 @@ import { createRequire } from "node:module";
 import { createLogger } from "../../shared/logger.js";
 import { DEnvError, type ErrorCode } from "../../shared/errors.js";
 import type { ProjectRepo } from "../../core/project.js";
+import {
+  ProviderInstanceRepo,
+  type ProviderInstanceRecord,
+} from "../../core/provider-instance.js";
 import { mountPath } from "../../shared/paths.js";
+import { providers, findProvider } from "../../providers/registry.js";
+import type {
+  KeychainAdapter,
+  Provider,
+  ProviderContext,
+} from "../../providers/base.js";
+import { InMemoryKeychainAdapter } from "../../providers/keychain.js";
 import { readJsonBody } from "./body.js";
 
 // createRequire is the stable way to load JSON in ESM without import assertions
@@ -42,6 +53,8 @@ export interface ControlServerOpts {
    */
   onShutdown?: () => void;
   projectRepo?: ProjectRepo;
+  providerInstanceRepo?: ProviderInstanceRepo;
+  keychain?: KeychainAdapter;
 }
 
 export interface ControlServerHandle {
@@ -215,11 +228,38 @@ function requireProjectRepo(projectRepo: ProjectRepo | undefined): ProjectRepo {
   return projectRepo;
 }
 
+function requireProviderInstanceRepo(
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+): ProviderInstanceRepo {
+  if (providerInstanceRepo === undefined) {
+    throw new DEnvError("provider instance registry is not available", {
+      code: "internal",
+    });
+  }
+  return providerInstanceRepo;
+}
+
+function requireKeychain(
+  keychain: KeychainAdapter | undefined,
+): KeychainAdapter {
+  if (keychain === undefined) {
+    throw new DEnvError("keychain adapter is not available", {
+      code: "internal",
+    });
+  }
+  return keychain;
+}
+
 function projectMountPath(id: string, token: string): string {
   return `${mountPath()}/p/${id}.${token}/.env`;
 }
 
-function parseProjectCreateBody(body: unknown): { path: string } {
+function parseProjectCreateBody(body: unknown): {
+  path: string;
+  providerInstanceId?: string;
+  format?: string;
+  formatConfig?: string;
+} {
   if (body === null || typeof body !== "object" || !("path" in body)) {
     throw new DEnvError("request body must include path", {
       code: "usage_error",
@@ -233,7 +273,44 @@ function parseProjectCreateBody(body: unknown): { path: string } {
     });
   }
 
-  return { path };
+  const input: {
+    path: string;
+    providerInstanceId?: string;
+    format?: string;
+    formatConfig?: string;
+  } = { path };
+  const providerInstanceId = (body as { providerInstanceId?: unknown })
+    .providerInstanceId;
+  if (providerInstanceId !== undefined) {
+    if (typeof providerInstanceId !== "string" || providerInstanceId === "") {
+      throw new DEnvError("providerInstanceId must be a non-empty string", {
+        code: "usage_error",
+      });
+    }
+    input.providerInstanceId = providerInstanceId;
+  }
+
+  const format = (body as { format?: unknown }).format;
+  if (format !== undefined) {
+    if (typeof format !== "string" || format === "") {
+      throw new DEnvError("format must be a non-empty string", {
+        code: "usage_error",
+      });
+    }
+    input.format = format;
+  }
+
+  const formatConfig = (body as { formatConfig?: unknown }).formatConfig;
+  if (formatConfig !== undefined) {
+    if (typeof formatConfig !== "string" || formatConfig === "") {
+      throw new DEnvError("formatConfig must be a non-empty string", {
+        code: "usage_error",
+      });
+    }
+    input.formatConfig = formatConfig;
+  }
+
+  return input;
 }
 
 async function handleCreateProject(
@@ -244,7 +321,7 @@ async function handleCreateProject(
   const repo = requireProjectRepo(projectRepo);
   const body = await readJsonBody(req);
   const input = parseProjectCreateBody(body);
-  const project = repo.create({ path: input.path });
+  const project = repo.create(input);
   writeJson(res, 201, {
     id: project.id,
     token: project.token,
@@ -288,6 +365,354 @@ function handleDeleteProject(
   res.end();
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function handleListProviders(res: ServerResponse): void {
+  writeJson(res, 200, {
+    providers: providers.map((provider) => ({
+      name: provider.name,
+      instanceConfigSchema: provider.instanceConfigSchema,
+      credentialKeys: provider.credentialKeys,
+    })),
+  });
+}
+
+interface ParsedCreateProviderInstanceBody {
+  readonly provider: Provider;
+  readonly name: string;
+  readonly config: Record<string, unknown>;
+  readonly credentials: Record<string, string>;
+}
+
+function parseCredentials(
+  body: Record<string, unknown>,
+  provider: Provider,
+): Record<string, string> {
+  const rawCredentials =
+    "credentials" in body ? body["credentials"] : Object.freeze({});
+  if (!isRecord(rawCredentials)) {
+    throw new DEnvError("credentials must be a JSON object", {
+      code: "usage_error",
+    });
+  }
+
+  const allowedKeys = new Set(provider.credentialKeys);
+  for (const key of Object.keys(rawCredentials)) {
+    if (!allowedKeys.has(key)) {
+      throw new DEnvError("credentials include an unknown key", {
+        code: "usage_error",
+        details: { key },
+      });
+    }
+  }
+
+  const credentials: Record<string, string> = {};
+  for (const key of provider.credentialKeys) {
+    const value = rawCredentials[key];
+    if (typeof value !== "string") {
+      throw new DEnvError("credentials must include string values", {
+        code: "usage_error",
+        details: { key },
+      });
+    }
+    credentials[key] = value;
+  }
+  return credentials;
+}
+
+function parseCreateProviderInstanceBody(
+  body: unknown,
+): ParsedCreateProviderInstanceBody {
+  if (!isRecord(body)) {
+    throw new DEnvError("request body must be a JSON object", {
+      code: "usage_error",
+    });
+  }
+
+  const providerName = body["provider"];
+  if (typeof providerName !== "string" || providerName === "") {
+    throw new DEnvError("provider must be a non-empty string", {
+      code: "usage_error",
+    });
+  }
+
+  const provider = findProvider(providerName);
+  if (provider === undefined) {
+    throw new DEnvError("provider is not registered", {
+      code: "usage_error",
+      details: { provider: providerName },
+    });
+  }
+
+  const name = body["name"];
+  if (typeof name !== "string" || name === "") {
+    throw new DEnvError("name must be a non-empty string", {
+      code: "usage_error",
+    });
+  }
+
+  const config = "config" in body ? body["config"] : {};
+  if (!isRecord(config)) {
+    throw new DEnvError("config must be a JSON object", {
+      code: "usage_error",
+    });
+  }
+
+  return {
+    provider,
+    name,
+    config,
+    credentials: parseCredentials(body, provider),
+  };
+}
+
+function parseStoredConfig(record: ProviderInstanceRecord): unknown {
+  try {
+    return JSON.parse(record.config) as unknown;
+  } catch (err: unknown) {
+    throw new DEnvError("provider instance config is malformed", {
+      code: "internal",
+      details: { providerInstanceId: record.id },
+      cause: err,
+    });
+  }
+}
+
+function providerInstanceResponse(
+  record: ProviderInstanceRecord,
+): Record<string, unknown> {
+  return {
+    id: record.id,
+    provider: record.provider,
+    name: record.name,
+    config: parseStoredConfig(record),
+    createdAt: record.createdAt,
+  };
+}
+
+function scopedKeychain(
+  keychain: KeychainAdapter,
+  providerInstanceId: string,
+): KeychainAdapter {
+  return {
+    set(_service, account, secret) {
+      return keychain.set(providerInstanceId, account, secret);
+    },
+    get(_service, account) {
+      return keychain.get(providerInstanceId, account);
+    },
+    delete(_service, account) {
+      return keychain.delete(providerInstanceId, account);
+    },
+  };
+}
+
+function providerContext(
+  keychain: KeychainAdapter,
+  providerInstanceId: string,
+  providerName: string,
+): ProviderContext {
+  return {
+    keychain: scopedKeychain(keychain, providerInstanceId),
+    logger: createLogger(`providers/${providerName}`),
+    fetch: globalThis.fetch,
+  };
+}
+
+async function storeCredentials(
+  keychain: KeychainAdapter,
+  providerInstanceId: string,
+  provider: Provider,
+  credentials: Record<string, string>,
+): Promise<void> {
+  for (const key of provider.credentialKeys) {
+    const value = credentials[key];
+    if (value === undefined) {
+      throw new DEnvError("credential is missing", {
+        code: "usage_error",
+        details: { key },
+      });
+    }
+    await keychain.set(providerInstanceId, key, value);
+  }
+}
+
+async function deleteCredentials(
+  keychain: KeychainAdapter,
+  providerInstanceId: string,
+  provider: Provider,
+): Promise<void> {
+  for (const key of provider.credentialKeys) {
+    await keychain.delete(providerInstanceId, key);
+  }
+}
+
+async function validateProviderInstanceConfig(
+  provider: Provider,
+  providerInstanceId: string,
+  keychain: KeychainAdapter,
+  config: unknown,
+): Promise<void> {
+  const instance = await provider.create(
+    providerContext(keychain, providerInstanceId, provider.name),
+    config,
+  );
+  if (instance.close !== undefined) {
+    await instance.close();
+  }
+}
+
+async function cleanupCreatedProviderInstance(
+  repo: ProviderInstanceRepo,
+  keychain: KeychainAdapter,
+  record: ProviderInstanceRecord,
+  provider: Provider,
+): Promise<void> {
+  try {
+    repo.delete(record.id);
+    await deleteCredentials(keychain, record.id, provider);
+  } catch (err: unknown) {
+    log.error({
+      msg: "failed to clean up provider instance after create failure",
+      data: { providerInstanceId: record.id, error: String(err) },
+    });
+  }
+}
+
+async function handleCreateProviderInstance(
+  req: IncomingMessage,
+  res: ServerResponse,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+): Promise<void> {
+  const repo = requireProviderInstanceRepo(providerInstanceRepo);
+  const keychainAdapter = requireKeychain(keychain);
+  const body = await readJsonBody(req);
+  const input = parseCreateProviderInstanceBody(body);
+  const record = repo.create({
+    provider: input.provider.name,
+    name: input.name,
+    config: JSON.stringify(input.config),
+  });
+
+  try {
+    await storeCredentials(
+      keychainAdapter,
+      record.id,
+      input.provider,
+      input.credentials,
+    );
+    await validateProviderInstanceConfig(
+      input.provider,
+      record.id,
+      keychainAdapter,
+      input.config,
+    );
+  } catch (err: unknown) {
+    await cleanupCreatedProviderInstance(
+      repo,
+      keychainAdapter,
+      record,
+      input.provider,
+    );
+    throw err;
+  }
+
+  writeJson(res, 201, { id: record.id });
+}
+
+function handleListProviderInstances(
+  res: ServerResponse,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+): void {
+  const repo = requireProviderInstanceRepo(providerInstanceRepo);
+  writeJson(res, 200, {
+    providerInstances: repo.list().map(providerInstanceResponse),
+  });
+}
+
+function handleGetProviderInstance(
+  res: ServerResponse,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  id: string,
+): void {
+  const repo = requireProviderInstanceRepo(providerInstanceRepo);
+  const record = repo.get(id);
+  if (record === undefined) {
+    writeJsonError(res, 404, "not_found", "Provider instance not found");
+    return;
+  }
+  writeJson(res, 200, providerInstanceResponse(record));
+}
+
+async function handleDeleteProviderInstance(
+  res: ServerResponse,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+  id: string,
+): Promise<void> {
+  const repo = requireProviderInstanceRepo(providerInstanceRepo);
+  const keychainAdapter = requireKeychain(keychain);
+  const record = repo.get(id);
+  if (record === undefined) {
+    writeJsonError(res, 404, "not_found", "Provider instance not found");
+    return;
+  }
+
+  const deleted = repo.delete(id);
+  if (!deleted) {
+    writeJsonError(res, 404, "not_found", "Provider instance not found");
+    return;
+  }
+
+  const provider = findProvider(record.provider);
+  if (provider !== undefined) {
+    await deleteCredentials(keychainAdapter, id, provider);
+  }
+
+  res.writeHead(204);
+  res.end();
+}
+
+async function handleTestProviderInstance(
+  res: ServerResponse,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+  id: string,
+): Promise<void> {
+  const repo = requireProviderInstanceRepo(providerInstanceRepo);
+  const keychainAdapter = requireKeychain(keychain);
+  const record = repo.get(id);
+  if (record === undefined) {
+    writeJsonError(res, 404, "not_found", "Provider instance not found");
+    return;
+  }
+
+  const provider = findProvider(record.provider);
+  if (provider === undefined) {
+    throw new DEnvError("provider is not registered", {
+      code: "usage_error",
+      details: { provider: record.provider },
+    });
+  }
+
+  const instance = await provider.create(
+    providerContext(keychainAdapter, id, provider.name),
+    parseStoredConfig(record),
+  );
+  let result: { ok: true } | { ok: false; reason: string };
+  try {
+    result = await instance.test();
+  } finally {
+    if (instance.close !== undefined) {
+      await instance.close();
+    }
+  }
+  writeJson(res, 200, result);
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -325,6 +750,12 @@ function buildRoutes(onShutdown?: () => void): Map<RouteKey, Handler> {
         handleShutdown(res, onShutdown);
       },
     ],
+    [
+      "GET /v1/providers",
+      (_req, res) => {
+        handleListProviders(res);
+      },
+    ],
   ]);
 }
 
@@ -334,12 +765,16 @@ const KNOWN_PATHS = new Set<string>([
   "/v1/version",
   "/v1/shutdown",
   "/v1/projects",
+  "/v1/providers",
+  "/v1/provider-instances",
 ]);
 
 function dispatch(
   token: string,
   routes: Map<RouteKey, Handler>,
   projectRepo: ProjectRepo | undefined,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  keychain: KeychainAdapter | undefined,
   req: IncomingMessage,
   res: ServerResponse,
 ): void {
@@ -358,6 +793,102 @@ function dispatch(
 
   if (handler !== undefined) {
     handler(req, res);
+    return;
+  }
+
+  if (method === "POST" && path === "/v1/provider-instances") {
+    void handleCreateProviderInstance(
+      req,
+      res,
+      providerInstanceRepo,
+      keychain,
+    ).catch((err: unknown) => {
+      writeErrorFromUnknown(res, err);
+    });
+    return;
+  }
+
+  if (method === "GET" && path === "/v1/provider-instances") {
+    try {
+      handleListProviderInstances(res, providerInstanceRepo);
+    } catch (err: unknown) {
+      writeErrorFromUnknown(res, err);
+    }
+    return;
+  }
+
+  const providerTestMatch = /^\/v1\/provider-instances\/([^/]+)\/test$/.exec(
+    path,
+  );
+  if (providerTestMatch !== null) {
+    const providerInstanceId = providerTestMatch[1];
+    if (providerInstanceId === undefined) {
+      writeJsonError(res, 404, "not_found", `No route for ${method} ${path}`);
+      return;
+    }
+
+    if (method === "POST") {
+      void handleTestProviderInstance(
+        res,
+        providerInstanceRepo,
+        keychain,
+        providerInstanceId,
+      ).catch((err: unknown) => {
+        writeErrorFromUnknown(res, err);
+      });
+      return;
+    }
+
+    writeJsonError(
+      res,
+      405,
+      "method_not_allowed",
+      `Method ${method} not allowed on ${path}`,
+    );
+    return;
+  }
+
+  const providerInstanceMatch = /^\/v1\/provider-instances\/([^/]+)$/.exec(
+    path,
+  );
+  if (providerInstanceMatch !== null) {
+    const providerInstanceId = providerInstanceMatch[1];
+    if (providerInstanceId === undefined) {
+      writeJsonError(res, 404, "not_found", `No route for ${method} ${path}`);
+      return;
+    }
+
+    try {
+      if (method === "GET") {
+        handleGetProviderInstance(
+          res,
+          providerInstanceRepo,
+          providerInstanceId,
+        );
+        return;
+      }
+      if (method === "DELETE") {
+        void handleDeleteProviderInstance(
+          res,
+          providerInstanceRepo,
+          keychain,
+          providerInstanceId,
+        ).catch((err: unknown) => {
+          writeErrorFromUnknown(res, err);
+        });
+        return;
+      }
+    } catch (err: unknown) {
+      writeErrorFromUnknown(res, err);
+      return;
+    }
+
+    writeJsonError(
+      res,
+      405,
+      "method_not_allowed",
+      `Method ${method} not allowed on ${path}`,
+    );
     return;
   }
 
@@ -432,11 +963,25 @@ export function startControlServer(
   const bindPort = opts.port ?? 1910;
   const token = opts.token;
   const projectRepo = opts.projectRepo;
+  const providerInstanceRepo = opts.providerInstanceRepo;
+  const keychain =
+    opts.keychain ??
+    (providerInstanceRepo === undefined
+      ? undefined
+      : new InMemoryKeychainAdapter());
   const routes = buildRoutes(opts.onShutdown);
 
   return new Promise((resolve, reject) => {
     const server: Server = createServer((req, res) => {
-      dispatch(token, routes, projectRepo, req, res);
+      dispatch(
+        token,
+        routes,
+        projectRepo,
+        providerInstanceRepo,
+        keychain,
+        req,
+        res,
+      );
     });
 
     server.once("error", reject);

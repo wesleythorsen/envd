@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fetch } from "undici";
 import { DEnvError } from "../shared/errors.js";
 import * as paths from "../shared/paths.js";
+import type { JSONSchema } from "../providers/base.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -17,6 +18,14 @@ export interface ControlClient {
   createProject(input: CreateProjectInput): Promise<CreateProjectResult>;
   getProject(id: string): Promise<ProjectDetail>;
   deleteProject(id: string): Promise<void>;
+  listProviders(): Promise<readonly ProviderMetadata[]>;
+  createProviderInstance(
+    input: CreateProviderInstanceInput,
+  ): Promise<CreateProviderInstanceResult>;
+  listProviderInstances(): Promise<readonly ProviderInstanceDetail[]>;
+  getProviderInstance(id: string): Promise<ProviderInstanceDetail>;
+  deleteProviderInstance(id: string): Promise<void>;
+  testProviderInstance(id: string): Promise<ProviderTestResult>;
   /**
    * Calls POST /v1/shutdown. Treats 204 as success.
    * ECONNREFUSED after the call is also treated as success — the daemon may
@@ -27,6 +36,9 @@ export interface ControlClient {
 
 export interface CreateProjectInput {
   readonly path: string;
+  readonly providerInstanceId?: string;
+  readonly format?: string;
+  readonly formatConfig?: string;
 }
 
 export interface CreateProjectResult {
@@ -46,6 +58,35 @@ export interface ProjectDetail {
   readonly updatedAt: number;
   readonly mountPath: string;
 }
+
+export interface ProviderMetadata {
+  readonly name: string;
+  readonly instanceConfigSchema: JSONSchema;
+  readonly credentialKeys: readonly string[];
+}
+
+export interface CreateProviderInstanceInput {
+  readonly provider: string;
+  readonly name: string;
+  readonly config?: Record<string, unknown>;
+  readonly credentials?: Record<string, string>;
+}
+
+export interface CreateProviderInstanceResult {
+  readonly id: string;
+}
+
+export interface ProviderInstanceDetail {
+  readonly id: string;
+  readonly provider: string;
+  readonly name: string;
+  readonly config: unknown;
+  readonly createdAt: number;
+}
+
+export type ProviderTestResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: string };
 
 export interface ControlClientOpts {
   /** Override base URL (e.g. http://127.0.0.1:1910). Defaults to reading paths.portsFile(). */
@@ -540,6 +581,58 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
         base,
         token,
         `/v1/projects/${encodeURIComponent(id)}`,
+        timeoutMs,
+      );
+    },
+
+    async listProviders() {
+      const response = await apiGet<{
+        providers: readonly ProviderMetadata[];
+      }>(base, token, "/v1/providers", timeoutMs);
+      return response.providers;
+    },
+
+    async createProviderInstance(input) {
+      return apiPostJson<CreateProviderInstanceResult>(
+        base,
+        token,
+        "/v1/provider-instances",
+        input,
+        timeoutMs,
+      );
+    },
+
+    async listProviderInstances() {
+      const response = await apiGet<{
+        providerInstances: readonly ProviderInstanceDetail[];
+      }>(base, token, "/v1/provider-instances", timeoutMs);
+      return response.providerInstances;
+    },
+
+    async getProviderInstance(id) {
+      return apiGet<ProviderInstanceDetail>(
+        base,
+        token,
+        `/v1/provider-instances/${encodeURIComponent(id)}`,
+        timeoutMs,
+      );
+    },
+
+    async deleteProviderInstance(id) {
+      return apiDelete(
+        base,
+        token,
+        `/v1/provider-instances/${encodeURIComponent(id)}`,
+        timeoutMs,
+      );
+    },
+
+    async testProviderInstance(id) {
+      return apiPostJson<ProviderTestResult>(
+        base,
+        token,
+        `/v1/provider-instances/${encodeURIComponent(id)}/test`,
+        {},
         timeoutMs,
       );
     },

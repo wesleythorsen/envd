@@ -10,6 +10,7 @@ import {
 } from "../../src/daemon/control/server.js";
 import { openState, type StateStore } from "../../src/core/state.js";
 import { ProjectRepo } from "../../src/core/project.js";
+import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
 
 const TOKEN = generateToken();
 
@@ -227,5 +228,185 @@ describe("/v1/projects", () => {
     const body = (await res.body.json()) as Record<string, unknown>;
     const err = body["error"] as Record<string, unknown>;
     expect(err["code"]).toBe("usage_error");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /v1/providers and /v1/provider-instances
+// ---------------------------------------------------------------------------
+
+describe("/v1/providers and /v1/provider-instances", () => {
+  const providerToken = generateToken();
+  let providerServer: ControlServerHandle;
+  let providerBase: string;
+  let state: StateStore;
+  let tempDir: string;
+  let providerFile: string;
+  let projectPath: string;
+
+  beforeAll(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "d-env-control-providers-"));
+    providerFile = join(tempDir, "secrets.json");
+    projectPath = join(tempDir, "project");
+    mkdirSync(projectPath);
+
+    state = openState(join(tempDir, "state.db"));
+    providerServer = await startControlServer({
+      port: 0,
+      token: providerToken,
+      projectRepo: new ProjectRepo(state.db),
+      providerInstanceRepo: new ProviderInstanceRepo(state.db),
+    });
+    providerBase = `http://127.0.0.1:${providerServer.port}`;
+  });
+
+  afterAll(async () => {
+    await providerServer.close();
+    state.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("lists providers and manages a local-file provider instance", async () => {
+    const providersRes = await request(`${providerBase}/v1/providers`, {
+      headers: { Authorization: `Bearer ${providerToken}` },
+    });
+    expect(providersRes.statusCode).toBe(200);
+    const providersBody = (await providersRes.body.json()) as {
+      providers?: readonly Record<string, unknown>[];
+    };
+    expect(providersBody.providers).toHaveLength(1);
+    const localFile = providersBody.providers?.[0];
+    if (localFile === undefined) {
+      throw new Error("expected local-file provider metadata");
+    }
+    expect(localFile["name"]).toBe("local-file");
+    expect(localFile["credentialKeys"]).toEqual([]);
+
+    const createRes = await request(`${providerBase}/v1/provider-instances`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${providerToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        provider: "local-file",
+        name: "Local secrets",
+        config: { path: providerFile },
+        credentials: {},
+      }),
+    });
+    expect(createRes.statusCode).toBe(201);
+    const created = (await createRes.body.json()) as Record<string, unknown>;
+    const providerInstanceId = created["id"];
+    if (typeof providerInstanceId !== "string") {
+      throw new Error("expected provider instance id to be a string");
+    }
+
+    const listRes = await request(`${providerBase}/v1/provider-instances`, {
+      headers: { Authorization: `Bearer ${providerToken}` },
+    });
+    expect(listRes.statusCode).toBe(200);
+    const listed = (await listRes.body.json()) as {
+      providerInstances?: readonly Record<string, unknown>[];
+    };
+    expect(listed.providerInstances).toHaveLength(1);
+    expect(listed.providerInstances?.[0]).toMatchObject({
+      id: providerInstanceId,
+      provider: "local-file",
+      name: "Local secrets",
+      config: { path: providerFile },
+    });
+    expect(JSON.stringify(listed)).not.toContain("credentials");
+
+    const getRes = await request(
+      `${providerBase}/v1/provider-instances/${providerInstanceId}`,
+      {
+        headers: { Authorization: `Bearer ${providerToken}` },
+      },
+    );
+    expect(getRes.statusCode).toBe(200);
+    const got = (await getRes.body.json()) as Record<string, unknown>;
+    expect(got).toMatchObject({
+      id: providerInstanceId,
+      provider: "local-file",
+      name: "Local secrets",
+      config: { path: providerFile },
+    });
+
+    const testRes = await request(
+      `${providerBase}/v1/provider-instances/${providerInstanceId}/test`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${providerToken}` },
+      },
+    );
+    expect(testRes.statusCode).toBe(200);
+    expect(await testRes.body.json()).toEqual({ ok: true });
+
+    const createProjectRes = await request(`${providerBase}/v1/projects`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${providerToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        path: projectPath,
+        providerInstanceId,
+      }),
+    });
+    expect(createProjectRes.statusCode).toBe(201);
+    const createdProject = (await createProjectRes.body.json()) as Record<
+      string,
+      unknown
+    >;
+    const projectId = createdProject["id"];
+    if (typeof projectId !== "string") {
+      throw new Error("expected project id to be a string");
+    }
+
+    const blockedDeleteRes = await request(
+      `${providerBase}/v1/provider-instances/${providerInstanceId}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${providerToken}` },
+      },
+    );
+    expect(blockedDeleteRes.statusCode).toBe(400);
+    const blockedDeleteBody = (await blockedDeleteRes.body.json()) as Record<
+      string,
+      unknown
+    >;
+    expect(
+      (blockedDeleteBody["error"] as Record<string, unknown>)["code"],
+    ).toBe("usage_error");
+
+    const deleteProjectRes = await request(
+      `${providerBase}/v1/projects/${projectId}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${providerToken}` },
+      },
+    );
+    expect(deleteProjectRes.statusCode).toBe(204);
+    await deleteProjectRes.body.dump();
+
+    const deleteRes = await request(
+      `${providerBase}/v1/provider-instances/${providerInstanceId}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${providerToken}` },
+      },
+    );
+    expect(deleteRes.statusCode).toBe(204);
+    await deleteRes.body.dump();
+
+    const missingRes = await request(
+      `${providerBase}/v1/provider-instances/${providerInstanceId}`,
+      {
+        headers: { Authorization: `Bearer ${providerToken}` },
+      },
+    );
+    expect(missingRes.statusCode).toBe(404);
+    await missingRes.body.dump();
   });
 });
