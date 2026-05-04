@@ -61,6 +61,10 @@ class FakeControlClient implements ControlClient {
     return Promise.resolve(this.project);
   }
 
+  deleteProject(): Promise<void> {
+    return Promise.resolve();
+  }
+
   shutdown(): Promise<void> {
     return Promise.resolve();
   }

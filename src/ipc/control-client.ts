@@ -16,6 +16,7 @@ export interface ControlClient {
   }>;
   createProject(input: CreateProjectInput): Promise<CreateProjectResult>;
   getProject(id: string): Promise<ProjectDetail>;
+  deleteProject(id: string): Promise<void>;
   /**
    * Calls POST /v1/shutdown. Treats 204 as success.
    * ECONNREFUSED after the call is also treated as success — the daemon may
@@ -407,6 +408,84 @@ async function apiPostJson<T>(
   throw new DEnvError(msg, { code: safeCode });
 }
 
+async function apiDelete(
+  base: string,
+  token: string,
+  path: string,
+  timeoutMs: number,
+): Promise<void> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => {
+    ac.abort();
+  }, timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(`${base}${path}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: ac.signal,
+    });
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new DEnvError("timeout", {
+        code: "daemon_unreachable",
+        cause: err,
+      });
+    }
+    if (isConnRefused(err)) {
+      throw new DEnvError("daemon is not running (connection refused)", {
+        code: "daemon_unreachable",
+        cause: err,
+      });
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (response.status === 204) {
+    return;
+  }
+
+  let errBody: unknown;
+  try {
+    errBody = await response.json();
+  } catch {
+    errBody = undefined;
+  }
+
+  const errObj =
+    errBody !== null && typeof errBody === "object" && "error" in errBody
+      ? (errBody as { error: { code?: unknown; message?: unknown } }).error
+      : undefined;
+
+  const code = typeof errObj?.code === "string" ? errObj.code : undefined;
+  const msg =
+    typeof errObj?.message === "string"
+      ? errObj.message
+      : `HTTP ${response.status} from ${path}`;
+
+  const isKnownCode =
+    code === "daemon_unreachable" ||
+    code === "usage_error" ||
+    code === "provider_unreachable" ||
+    code === "provider_auth" ||
+    code === "commit_conflict" ||
+    code === "mount_failed" ||
+    code === "not_initialized" ||
+    code === "internal" ||
+    code === "bad_dotenv" ||
+    code === "unauthorized" ||
+    code === "not_found" ||
+    code === "method_not_allowed";
+  const safeCode: import("../shared/errors.js").ErrorCode = isKnownCode
+    ? code
+    : "internal";
+
+  throw new DEnvError(msg, { code: safeCode });
+}
+
 // ---------------------------------------------------------------------------
 // Public factory
 // ---------------------------------------------------------------------------
@@ -448,6 +527,15 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
 
     async getProject(id) {
       return apiGet<ProjectDetail>(
+        base,
+        token,
+        `/v1/projects/${encodeURIComponent(id)}`,
+        timeoutMs,
+      );
+    },
+
+    async deleteProject(id) {
+      return apiDelete(
         base,
         token,
         `/v1/projects/${encodeURIComponent(id)}`,

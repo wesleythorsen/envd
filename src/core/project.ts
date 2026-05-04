@@ -133,7 +133,7 @@ export class ProjectRepo {
         `
         SELECT id, token, path, format, format_config, created_at, updated_at
         FROM projects
-        ORDER BY created_at ASC, id ASC
+        ORDER BY rowid ASC
       `,
       )
       .all()

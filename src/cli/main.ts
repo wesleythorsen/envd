@@ -3,6 +3,9 @@ import { createRequire } from "node:module";
 import { Command } from "commander";
 import { buildDaemonCommand } from "./commands/daemon.js";
 import { buildInitCommand } from "./commands/init.js";
+import { buildLinkCommand } from "./commands/link.js";
+import { buildStatusCommand } from "./commands/status.js";
+import { buildUnlinkCommand } from "./commands/unlink.js";
 
 // createRequire is the stable way to load JSON in ESM without import assertions
 const require = createRequire(import.meta.url);
@@ -24,5 +27,8 @@ program
 
 program.addCommand(buildDaemonCommand());
 program.addCommand(buildInitCommand());
+program.addCommand(buildLinkCommand());
+program.addCommand(buildStatusCommand());
+program.addCommand(buildUnlinkCommand());
 
 program.parse();
