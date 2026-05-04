@@ -4,6 +4,7 @@ import { Command } from "commander";
 import { buildDaemonCommand } from "./commands/daemon.js";
 import { buildInitCommand } from "./commands/init.js";
 import { buildLinkCommand } from "./commands/link.js";
+import { buildProviderCommand } from "./commands/provider.js";
 import { buildStatusCommand } from "./commands/status.js";
 import { buildUnlinkCommand } from "./commands/unlink.js";
 
@@ -28,6 +29,7 @@ program
 program.addCommand(buildDaemonCommand());
 program.addCommand(buildInitCommand());
 program.addCommand(buildLinkCommand());
+program.addCommand(buildProviderCommand());
 program.addCommand(buildStatusCommand());
 program.addCommand(buildUnlinkCommand());
 
