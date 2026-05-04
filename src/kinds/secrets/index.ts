@@ -1,4 +1,7 @@
-import { DEnvError } from "../../shared/errors.js";
+import {
+  parse as parseDotenv,
+  render as renderDotenv,
+} from "../../core/rendering/dotenv.js";
 import type { ChangeSet, SecretMap } from "../../providers/base.js";
 
 export interface FormatConfig {
@@ -23,12 +26,6 @@ export interface DataKind<TDoc, TKey, TValue> {
 }
 
 export type SecretDiff = Diff<string, string>;
-
-function unimplementedFormatMethod(method: "parse" | "render"): never {
-  throw new DEnvError(`secrets ${method} is implemented in US-4.8`, {
-    code: "internal",
-  });
-}
 
 function diffSecrets(a: SecretMap, b: SecretMap): SecretDiff {
   const added: Record<string, string> = {};
@@ -87,11 +84,11 @@ function diffToChangeSet(diff: SecretDiff): ChangeSet {
 
 export const secretsKind: DataKind<SecretMap, string, string> = {
   kind: "secrets",
-  parse() {
-    return unimplementedFormatMethod("parse");
+  parse(bytes, format) {
+    return parseDotenv(bytes, format.options);
   },
-  render() {
-    return unimplementedFormatMethod("render");
+  render(doc, format) {
+    return renderDotenv(doc, format.options);
   },
   diff: diffSecrets,
   merge: mergeSecrets,

@@ -5,7 +5,9 @@ import {
   mergeSecrets,
   secretsKind,
 } from "../../src/kinds/secrets/index.js";
-import { DEnvError } from "../../src/shared/errors.js";
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 describe("secretsKind", () => {
   it("names the secrets data kind", () => {
@@ -51,12 +53,19 @@ describe("secretsKind", () => {
     });
   });
 
-  it("leaves parse/render for the dotenv parser story", () => {
-    expect(() => {
-      secretsKind.parse(new Uint8Array(), { format: "dotenv" });
-    }).toThrow(DEnvError);
-    expect(() => {
-      secretsKind.render({}, { format: "dotenv" });
-    }).toThrow(DEnvError);
+  it("parses and renders dotenv through the secrets data kind", () => {
+    const parsed = secretsKind.parse(encoder.encode("B=2\nA=one two\n"), {
+      format: "dotenv",
+    });
+
+    expect(parsed).toEqual({ B: "2", A: "one two" });
+    expect(
+      decoder.decode(
+        secretsKind.render(parsed, {
+          format: "dotenv",
+          options: { quote: "always", sortKeys: "alphabetical" },
+        }),
+      ),
+    ).toBe('A="one two"\nB="2"\n');
   });
 });
