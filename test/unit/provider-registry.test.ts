@@ -2,11 +2,15 @@ import { describe, expect, it } from "vitest";
 import { findProvider, providers } from "../../src/providers/registry.js";
 
 describe("provider registry", () => {
-  it("starts with no registered providers", () => {
-    expect(providers).toEqual([]);
+  it("starts with the built-in local-file provider", () => {
+    expect(providers.map((provider) => provider.name)).toEqual(["local-file"]);
+  });
+
+  it("finds the built-in local-file provider", () => {
+    expect(findProvider("local-file")?.name).toBe("local-file");
   });
 
   it("returns undefined for unknown providers", () => {
-    expect(findProvider("local-file")).toBeUndefined();
+    expect(findProvider("missing")).toBeUndefined();
   });
 });
