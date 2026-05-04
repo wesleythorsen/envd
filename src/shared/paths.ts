@@ -19,6 +19,10 @@ export function portsFile(): string {
   return join(stateDir(), "ports.json");
 }
 
+export function stateDbFile(): string {
+  return join(stateDir(), "state.db");
+}
+
 export function controlTokenFile(): string {
   return join(stateDir(), "control-token");
 }
@@ -29,14 +33,19 @@ export function logDir(): string {
 
 /**
  * Returns the OS-specific WebDAV mount path.
- * darwin → /Volumes/d-env
+ * $D_ENV_MOUNT_PATH overrides the default.
+ * darwin → ~/.d-env/mount
  * linux  → ~/.d-env/mount
  * other  → throws (unsupported platform)
  */
 export function mountPath(): string {
+  const override = process.env["D_ENV_MOUNT_PATH"];
+  if (override !== undefined && override !== "") {
+    return override;
+  }
+
   switch (process.platform) {
     case "darwin":
-      return "/Volumes/d-env";
     case "linux":
       return join(stateDir(), "mount");
     default:

@@ -85,7 +85,7 @@ These establish the skeleton. Almost everything else depends on this wave. Keep 
 
 **Tasks.**
 1. Add `os.homedir()` / `process.env.D_ENV_HOME` resolution.
-2. Platform branch for `mountPath`: `/Volumes/d-env` (darwin), `~/.d-env/mount` (linux), throw on unsupported.
+2. Platform branch for `mountPath`: `~/.d-env/mount` (darwin/linux), throw on unsupported; allow an explicit mount-path override for local testing or future config.
 3. Tests in `test/unit/paths.test.ts` using a tmpdir and env manipulation.
 
 **Depends on.** US-0.1 (needs the source tree).

@@ -9,7 +9,10 @@ import {
   ensureStateDir,
   pidFile,
   portsFile,
+  stateDbFile,
 } from "../shared/paths.js";
+import { openState } from "../core/state.js";
+import { ProjectRepo } from "../core/project.js";
 
 // createRequire is the stable way to load JSON in ESM without import assertions
 const require = createRequire(import.meta.url);
@@ -136,6 +139,8 @@ async function main(): Promise<void> {
   writePidFile();
 
   const token = loadOrCreateToken();
+  const state = openState(stateDbFile());
+  const projectRepo = new ProjectRepo(state.db);
 
   // Shutdown logic shared by SIGTERM and the /v1/shutdown endpoint.
   // Defined here so both paths call the exact same code.
@@ -157,6 +162,7 @@ async function main(): Promise<void> {
         });
       })
       .finally(() => {
+        state.close();
         cleanupFiles();
         process.exit(0);
       });
@@ -169,9 +175,10 @@ async function main(): Promise<void> {
   const shutdownBox: { fn?: () => void } = {};
 
   const [webdav, control] = await Promise.all([
-    startWebdavServer(),
+    startWebdavServer({ projectRepo }),
     startControlServer({
       token,
+      projectRepo,
       onShutdown: () => {
         shutdownBox.fn?.();
       },

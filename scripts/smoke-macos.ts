@@ -10,9 +10,10 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { startWebdavServer } from "../src/daemon/webdav/server.js";
 import { createMountAdapter } from "../src/mount/index.js";
+import { openState } from "../src/core/state.js";
+import { ProjectRepo } from "../src/core/project.js";
 
 const MOUNT_TIMEOUT_MS = 10_000;
-const EXPECTED_CONTENT = "HELLO=world\n";
 
 function randomSuffix(): string {
   return crypto.randomBytes(3).toString("hex"); // 6 chars
@@ -54,12 +55,26 @@ async function main(): Promise<void> {
     "/private/tmp",
     `d-env-smoke-${process.pid}-${randomSuffix()}`,
   );
+  const statePath = path.join(
+    "/private/tmp",
+    `d-env-smoke-${process.pid}-${randomSuffix()}.db`,
+  );
+  const projectPath = path.join(
+    "/private/tmp",
+    `d-env-smoke-project-${process.pid}-${randomSuffix()}`,
+  );
+
+  await fs.mkdir(projectPath);
+  const state = openState(statePath);
+  const projectRepo = new ProjectRepo(state.db);
+  const project = projectRepo.create({ path: projectPath });
 
   // --- Step 1: Start the WebDAV server ---
   let server: Awaited<ReturnType<typeof startWebdavServer>>;
   try {
-    server = await startWebdavServer({ port: 0 }); // ephemeral port
+    server = await startWebdavServer({ port: 0, projectRepo }); // ephemeral port
   } catch (err) {
+    state.close();
     fail("start WebDAV server", err);
   }
 
@@ -85,8 +100,13 @@ async function main(): Promise<void> {
       fail("mount WebDAV", err);
     }
 
-    // --- Step 3: Read hello/.env and assert content ---
-    const envFile = path.join(mountPath, "hello", ".env");
+    // --- Step 3: Read the virtual project .env and assert content ---
+    const envFile = path.join(
+      mountPath,
+      "p",
+      `${project.id}.${project.token}`,
+      ".env",
+    );
     let content: string;
     try {
       content = await fs.readFile(envFile, "utf-8");
@@ -94,11 +114,11 @@ async function main(): Promise<void> {
       fail("read hello/.env", err);
     }
 
-    if (content !== EXPECTED_CONTENT) {
+    if (!content.includes(`# d-env project ${project.id}\n`)) {
       fail(
         "assert content",
         new Error(
-          `expected ${JSON.stringify(EXPECTED_CONTENT)}, got ${JSON.stringify(content)}`,
+          `expected project placeholder for ${project.id}, got ${JSON.stringify(content)}`,
         ),
       );
     }
@@ -122,6 +142,9 @@ async function main(): Promise<void> {
         `[smoke-macos] WARNING: server close failed: ${err instanceof Error ? err.message : String(err)}\n`,
       );
     }
+    state.close();
+    await fs.rm(statePath, { force: true });
+    await fs.rm(projectPath, { recursive: true, force: true });
   }
 
   // --- Step 6: Report success ---

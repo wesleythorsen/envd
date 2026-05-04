@@ -11,6 +11,11 @@ import {
 import { DEnvError } from "../../src/shared/errors.js";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { openState, type StateStore } from "../../src/core/state.js";
+import { ProjectRepo } from "../../src/core/project.js";
 
 // ---------------------------------------------------------------------------
 // Test server setup
@@ -60,6 +65,57 @@ describe("version() happy path", () => {
     expect(result.cli).toBeNull();
     expect(typeof result.daemon).toBe("string");
     expect(result.protocol).toBe("v1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// project APIs — happy path
+// ---------------------------------------------------------------------------
+
+describe("project APIs happy path", () => {
+  const projectToken = generateToken();
+  let projectServer: ControlServerHandle;
+  let projectClient: ControlClient;
+  let state: StateStore;
+  let tempDir: string;
+  let projectPath: string;
+
+  beforeAll(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "d-env-client-projects-"));
+    projectPath = join(tempDir, "project");
+    mkdirSync(projectPath);
+    state = openState(join(tempDir, "state.db"));
+    projectServer = await startControlServer({
+      port: 0,
+      token: projectToken,
+      projectRepo: new ProjectRepo(state.db),
+    });
+    projectClient = createControlClient({
+      baseUrl: `http://127.0.0.1:${projectServer.port}`,
+      token: projectToken,
+    });
+  });
+
+  afterAll(async () => {
+    await projectServer.close();
+    state.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("creates and gets a project", async () => {
+    const created = await projectClient.createProject({ path: projectPath });
+    expect(created.id).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    expect(created.token).toMatch(/^[0-9a-f]{64}$/);
+    expect(created.mountPath).toContain(
+      `/p/${created.id}.${created.token}/.env`,
+    );
+
+    const detail = await projectClient.getProject(created.id);
+    expect(detail.id).toBe(created.id);
+    expect(detail.path).toBe(projectPath);
+    expect(detail.mountPath).toBe(created.mountPath);
   });
 });
 

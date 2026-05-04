@@ -7,7 +7,10 @@ import type { Server } from "node:http";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { createLogger } from "../../shared/logger.js";
-import type { ErrorCode } from "../../shared/errors.js";
+import { DEnvError, type ErrorCode } from "../../shared/errors.js";
+import type { ProjectRepo } from "../../core/project.js";
+import { mountPath } from "../../shared/paths.js";
+import { readJsonBody } from "./body.js";
 
 // createRequire is the stable way to load JSON in ESM without import assertions
 const require = createRequire(import.meta.url);
@@ -38,6 +41,7 @@ export interface ControlServerOpts {
    * (useful for unit tests that don't want the process to exit).
    */
   onShutdown?: () => void;
+  projectRepo?: ProjectRepo;
 }
 
 export interface ControlServerHandle {
@@ -83,6 +87,44 @@ function writeJsonError(
     body.error.details = details;
   }
   writeJson(res, status, body);
+}
+
+function statusForErrorCode(code: ErrorCode): number {
+  switch (code) {
+    case "usage_error":
+    case "bad_dotenv":
+      return 400;
+    case "unauthorized":
+      return 401;
+    case "not_initialized":
+    case "not_found":
+      return 404;
+    case "method_not_allowed":
+      return 405;
+    case "commit_conflict":
+      return 409;
+    case "daemon_unreachable":
+    case "provider_unreachable":
+    case "provider_auth":
+    case "mount_failed":
+    case "internal":
+      return 500;
+  }
+}
+
+function writeErrorFromUnknown(res: ServerResponse, err: unknown): void {
+  if (err instanceof DEnvError) {
+    writeJsonError(
+      res,
+      statusForErrorCode(err.code),
+      err.code,
+      err.message,
+      err.details,
+    );
+    return;
+  }
+
+  writeJsonError(res, 500, "internal", "Internal error");
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +206,88 @@ function handleShutdown(res: ServerResponse, onShutdown?: () => void): void {
   });
 }
 
+function requireProjectRepo(projectRepo: ProjectRepo | undefined): ProjectRepo {
+  if (projectRepo === undefined) {
+    throw new DEnvError("project registry is not available", {
+      code: "internal",
+    });
+  }
+  return projectRepo;
+}
+
+function projectMountPath(id: string, token: string): string {
+  return `${mountPath()}/p/${id}.${token}/.env`;
+}
+
+function parseProjectCreateBody(body: unknown): { path: string } {
+  if (body === null || typeof body !== "object" || !("path" in body)) {
+    throw new DEnvError("request body must include path", {
+      code: "usage_error",
+    });
+  }
+
+  const path = (body as { path?: unknown }).path;
+  if (typeof path !== "string" || path === "") {
+    throw new DEnvError("path must be a non-empty string", {
+      code: "usage_error",
+    });
+  }
+
+  return { path };
+}
+
+async function handleCreateProject(
+  req: IncomingMessage,
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+): Promise<void> {
+  const repo = requireProjectRepo(projectRepo);
+  const body = await readJsonBody(req);
+  const input = parseProjectCreateBody(body);
+  const project = repo.create({ path: input.path });
+  writeJson(res, 201, {
+    id: project.id,
+    token: project.token,
+    mountPath: projectMountPath(project.id, project.token),
+  });
+}
+
+function handleListProjects(
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+): void {
+  const repo = requireProjectRepo(projectRepo);
+  writeJson(res, 200, { projects: repo.list() });
+}
+
+function handleGetProject(
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+  id: string,
+): void {
+  const repo = requireProjectRepo(projectRepo);
+  const project = repo.get(id);
+  if (project === undefined) {
+    writeJsonError(res, 404, "not_found", "Project not found");
+    return;
+  }
+  writeJson(res, 200, {
+    ...project,
+    mountPath: projectMountPath(project.id, project.token),
+  });
+}
+
+function handleDeleteProject(
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+  id: string,
+): void {
+  const repo = requireProjectRepo(projectRepo);
+  repo.delete(id);
+  res.writeHead(204);
+  res.end();
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -209,11 +333,13 @@ const KNOWN_PATHS = new Set<string>([
   "/v1/health",
   "/v1/version",
   "/v1/shutdown",
+  "/v1/projects",
 ]);
 
 function dispatch(
   token: string,
   routes: Map<RouteKey, Handler>,
+  projectRepo: ProjectRepo | undefined,
   req: IncomingMessage,
   res: ServerResponse,
 ): void {
@@ -232,6 +358,53 @@ function dispatch(
 
   if (handler !== undefined) {
     handler(req, res);
+    return;
+  }
+
+  if (method === "POST" && path === "/v1/projects") {
+    void handleCreateProject(req, res, projectRepo).catch((err: unknown) => {
+      writeErrorFromUnknown(res, err);
+    });
+    return;
+  }
+
+  if (method === "GET" && path === "/v1/projects") {
+    try {
+      handleListProjects(res, projectRepo);
+    } catch (err: unknown) {
+      writeErrorFromUnknown(res, err);
+    }
+    return;
+  }
+
+  const projectMatch = /^\/v1\/projects\/([^/]+)$/.exec(path);
+  if (projectMatch !== null) {
+    const projectId = projectMatch[1];
+    if (projectId === undefined) {
+      writeJsonError(res, 404, "not_found", `No route for ${method} ${path}`);
+      return;
+    }
+
+    try {
+      if (method === "GET") {
+        handleGetProject(res, projectRepo, projectId);
+        return;
+      }
+      if (method === "DELETE") {
+        handleDeleteProject(res, projectRepo, projectId);
+        return;
+      }
+    } catch (err: unknown) {
+      writeErrorFromUnknown(res, err);
+      return;
+    }
+
+    writeJsonError(
+      res,
+      405,
+      "method_not_allowed",
+      `Method ${method} not allowed on ${path}`,
+    );
     return;
   }
 
@@ -258,11 +431,12 @@ export function startControlServer(
 ): Promise<ControlServerHandle> {
   const bindPort = opts.port ?? 1910;
   const token = opts.token;
+  const projectRepo = opts.projectRepo;
   const routes = buildRoutes(opts.onShutdown);
 
   return new Promise((resolve, reject) => {
     const server: Server = createServer((req, res) => {
-      dispatch(token, routes, req, res);
+      dispatch(token, routes, projectRepo, req, res);
     });
 
     server.once("error", reject);

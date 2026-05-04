@@ -50,14 +50,14 @@
 
 ### 3. OS mount
 
-- macOS: `mount_webdav http://127.0.0.1:PORT/ /Volumes/d-env` (built-in, no install).
+- macOS: `mount_webdav http://127.0.0.1:PORT/ ~/.d-env/mount` (built-in, no install). `/Volumes/d-env` can be used via config/override, but is not the default because creating `/Volumes/*` may require elevated permissions.
 - Linux: `mount.davfs http://127.0.0.1:PORT/ ~/.d-env/mount` via the `davfs2` package. (Out-of-tree, but packaged in common distros.)
 - The mount is established by the CLI on `d-env init` (if missing) and reused for every project afterward. The same mount hosts multiple projects under distinct paths.
 
 ### 4. Project symlink
 
 - On `d-env link` (or the first `d-env init`), the CLI creates a symlink in the project directory:
-  - `./.env -> /Volumes/d-env/p/<project-id>/.env`
+  - `./.env -> ~/.d-env/mount/p/<project-id>/.env`
 - The project ID is a UUID generated at init time. The mapping `project-id -> provider/config/naming` lives in the daemon's state store.
 - **Per-project access token**: the path can optionally include a URL-safe token (e.g. `/p/<project-id>.<token>/.env`) so another local process can't enumerate `/p/` and read secrets. The symlink embeds the token; the daemon rejects requests with a wrong token. This is a v1 hardening — still only defense-in-depth, since loopback + file permissions are the main trust boundary.
 
@@ -83,7 +83,7 @@ Adding AWS Secrets Manager, Vault, or our own provider later is an additive chan
 
 ### Read flow (app starts, reads `.env`)
 
-1. App opens `./.env`. Symlink resolves to `/Volumes/d-env/p/<id>.<tok>/.env`.
+1. App opens `./.env`. Symlink resolves to `~/.d-env/mount/p/<id>.<tok>/.env`.
 2. macOS issues a `PROPFIND` then `GET` to the daemon's WebDAV server.
 3. Daemon authenticates the path (project id + token), loads the project record.
 4. Daemon asks the configured provider for the latest secrets. If a fresh-enough cached snapshot exists (TTL, default 60s), use that. Otherwise fetch.
@@ -127,7 +127,7 @@ This keeps "edit in your editor" and "publish to the team" as two distinct steps
 | WebDAV port         | `1911`                | `d-env config set daemon.webdav.port` |
 | Control API port    | `1910`                | `d-env config set daemon.control.port` |
 | State dir           | `~/.d-env/`           | `$D_ENV_HOME`                     |
-| Mount point (macOS) | `/Volumes/d-env`      | `d-env config set mount.macos.path` |
+| Mount point (macOS) | `~/.d-env/mount`      | `d-env config set mount.macos.path` |
 | Mount point (Linux) | `~/.d-env/mount`      | `d-env config set mount.linux.path` |
 | WebDAV path schema  | `/p/<project-id>.<tok>/.env` | fixed in v1                       |
 

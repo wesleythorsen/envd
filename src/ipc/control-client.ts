@@ -14,12 +14,35 @@ export interface ControlClient {
     daemon: string;
     protocol: string;
   }>;
+  createProject(input: CreateProjectInput): Promise<CreateProjectResult>;
+  getProject(id: string): Promise<ProjectDetail>;
   /**
    * Calls POST /v1/shutdown. Treats 204 as success.
    * ECONNREFUSED after the call is also treated as success — the daemon may
    * close its socket as part of shutdown before our read completes.
    */
   shutdown(): Promise<void>;
+}
+
+export interface CreateProjectInput {
+  readonly path: string;
+}
+
+export interface CreateProjectResult {
+  readonly id: string;
+  readonly token: string;
+  readonly mountPath: string;
+}
+
+export interface ProjectDetail {
+  readonly id: string;
+  readonly token: string;
+  readonly path: string;
+  readonly format: string;
+  readonly formatConfig: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+  readonly mountPath: string;
 }
 
 export interface ControlClientOpts {
@@ -301,6 +324,89 @@ async function apiPost(
   throw new DEnvError(msg, { code: safeCode });
 }
 
+async function apiPostJson<T>(
+  base: string,
+  token: string,
+  path: string,
+  body: unknown,
+  timeoutMs: number,
+): Promise<T> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => {
+    ac.abort();
+  }, timeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(`${base}${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: ac.signal,
+    });
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new DEnvError("timeout", {
+        code: "daemon_unreachable",
+        cause: err,
+      });
+    }
+    if (isConnRefused(err)) {
+      throw new DEnvError("daemon is not running (connection refused)", {
+        code: "daemon_unreachable",
+        cause: err,
+      });
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (response.ok) {
+    return (await response.json()) as T;
+  }
+
+  let errBody: unknown;
+  try {
+    errBody = await response.json();
+  } catch {
+    errBody = undefined;
+  }
+
+  const errObj =
+    errBody !== null && typeof errBody === "object" && "error" in errBody
+      ? (errBody as { error: { code?: unknown; message?: unknown } }).error
+      : undefined;
+
+  const code = typeof errObj?.code === "string" ? errObj.code : undefined;
+  const msg =
+    typeof errObj?.message === "string"
+      ? errObj.message
+      : `HTTP ${response.status} from ${path}`;
+
+  const isKnownCode =
+    code === "daemon_unreachable" ||
+    code === "usage_error" ||
+    code === "provider_unreachable" ||
+    code === "provider_auth" ||
+    code === "commit_conflict" ||
+    code === "mount_failed" ||
+    code === "not_initialized" ||
+    code === "internal" ||
+    code === "bad_dotenv" ||
+    code === "unauthorized" ||
+    code === "not_found" ||
+    code === "method_not_allowed";
+  const safeCode: import("../shared/errors.js").ErrorCode = isKnownCode
+    ? code
+    : "internal";
+
+  throw new DEnvError(msg, { code: safeCode });
+}
+
 // ---------------------------------------------------------------------------
 // Public factory
 // ---------------------------------------------------------------------------
@@ -326,6 +432,25 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
         base,
         token,
         "/v1/version",
+        timeoutMs,
+      );
+    },
+
+    async createProject(input) {
+      return apiPostJson<CreateProjectResult>(
+        base,
+        token,
+        "/v1/projects",
+        input,
+        timeoutMs,
+      );
+    },
+
+    async getProject(id) {
+      return apiGet<ProjectDetail>(
+        base,
+        token,
+        `/v1/projects/${encodeURIComponent(id)}`,
         timeoutMs,
       );
     },

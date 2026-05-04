@@ -8,10 +8,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { readFile, rmdir } from "node:fs/promises";
+import { readFile, rmdir, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { startWebdavServer } from "../../src/daemon/webdav/server.js";
 import { DarwinMountAdapter } from "../../src/mount/darwin.js";
+import { openState } from "../../src/core/state.js";
+import { ProjectRepo } from "../../src/core/project.js";
 
 const isDarwin = process.platform === "darwin";
 
@@ -24,8 +26,14 @@ describe("darwin mount adapter (integration)", () => {
       // which mount_webdav accepts just fine on macOS.
       const rand = Math.random().toString(36).slice(2, 8);
       const mountPath = `/private/tmp/d-env-it-${process.pid}-${rand}`;
+      const statePath = `/private/tmp/d-env-it-${process.pid}-${rand}.db`;
+      const projectPath = `/private/tmp/d-env-it-${process.pid}-${rand}-project`;
+      await mkdir(projectPath);
 
-      const server = await startWebdavServer({ port: 0 });
+      const state = openState(statePath);
+      const projectRepo = new ProjectRepo(state.db);
+      const project = projectRepo.create({ path: projectPath });
+      const server = await startWebdavServer({ port: 0, projectRepo });
       const url = `http://127.0.0.1:${server.port}/`;
 
       const adapter = new DarwinMountAdapter();
@@ -33,10 +41,14 @@ describe("darwin mount adapter (integration)", () => {
       try {
         await adapter.mount(url, mountPath);
 
-        // The server serves HELLO=world at /hello/.env
-        const filePath = join(mountPath, "hello", ".env");
+        const filePath = join(
+          mountPath,
+          "p",
+          `${project.id}.${project.token}`,
+          ".env",
+        );
         const content = await readFile(filePath, "utf-8");
-        expect(content).toBe("HELLO=world\n");
+        expect(content).toContain(`# d-env project ${project.id}\n`);
       } finally {
         // Best-effort unmount and cleanup — always runs even if the read fails.
         try {
@@ -49,6 +61,13 @@ describe("darwin mount adapter (integration)", () => {
         } catch {
           // Directory may not exist if mount never succeeded; ignore.
         }
+        try {
+          await rmdir(projectPath);
+        } catch {
+          // Ignore cleanup errors.
+        }
+        state.close();
+        await rm(statePath, { force: true });
         await server.close();
       }
     },

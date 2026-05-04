@@ -83,14 +83,28 @@ describe("derived path functions", () => {
 });
 
 describe("mountPath()", () => {
-  it("returns /Volumes/d-env on darwin", () => {
+  beforeEach(() => {
+    process.env["D_ENV_HOME"] = "/tmp/d-env-test";
+  });
+
+  afterEach(() => {
+    delete process.env["D_ENV_HOME"];
+    delete process.env["D_ENV_MOUNT_PATH"];
+  });
+
+  it("honors D_ENV_MOUNT_PATH override", () => {
+    process.env["D_ENV_MOUNT_PATH"] = "/tmp/custom-mount";
+    expect(mountPath()).toBe("/tmp/custom-mount");
+  });
+
+  it("returns stateDir/mount on darwin", () => {
     const orig = process.platform;
     Object.defineProperty(process, "platform", {
       value: "darwin",
       configurable: true,
     });
     try {
-      expect(mountPath()).toBe("/Volumes/d-env");
+      expect(mountPath()).toBe("/tmp/d-env-test/mount");
     } finally {
       Object.defineProperty(process, "platform", {
         value: orig,
@@ -100,7 +114,6 @@ describe("mountPath()", () => {
   });
 
   it("returns stateDir/mount on linux", () => {
-    process.env["D_ENV_HOME"] = "/tmp/d-env-test";
     const orig = process.platform;
     Object.defineProperty(process, "platform", {
       value: "linux",
@@ -113,7 +126,6 @@ describe("mountPath()", () => {
         value: orig,
         configurable: true,
       });
-      delete process.env["D_ENV_HOME"];
     }
   });
 

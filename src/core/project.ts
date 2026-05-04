@@ -1,0 +1,147 @@
+import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
+import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import type { Database } from "better-sqlite3";
+import { DEnvError } from "../shared/errors.js";
+
+export interface Project {
+  readonly id: string;
+  readonly token: string;
+  readonly path: string;
+  readonly format: string;
+  readonly formatConfig: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export interface CreateProjectInput {
+  readonly path: string;
+  readonly format?: string;
+  readonly formatConfig?: string;
+}
+
+interface ProjectRow {
+  id: string;
+  token: string;
+  path: string;
+  format: string;
+  format_config: string;
+  created_at: number;
+  updated_at: number;
+}
+
+function rowToProject(row: ProjectRow): Project {
+  return {
+    id: row.id,
+    token: row.token,
+    path: row.path,
+    format: row.format,
+    formatConfig: row.format_config,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function tokensEqual(a: string, b: string): boolean {
+  const aBuffer = Buffer.from(a, "utf-8");
+  const bBuffer = Buffer.from(b, "utf-8");
+  if (aBuffer.length !== bBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(aBuffer, bBuffer);
+}
+
+export class ProjectRepo {
+  private readonly db: Database;
+
+  constructor(db: Database) {
+    this.db = db;
+  }
+
+  create(input: CreateProjectInput): Project {
+    if (!isAbsolute(input.path)) {
+      throw new DEnvError("project path must be absolute", {
+        code: "usage_error",
+        details: { path: input.path },
+      });
+    }
+
+    if (!existsSync(input.path)) {
+      throw new DEnvError("project path does not exist", {
+        code: "usage_error",
+        details: { path: input.path },
+      });
+    }
+
+    const now = Date.now();
+    const project: Project = {
+      id: randomUUID(),
+      token: randomBytes(32).toString("hex"),
+      path: input.path,
+      format: input.format ?? "dotenv",
+      formatConfig: input.formatConfig ?? "{}",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.db
+      .prepare(
+        `
+        INSERT INTO projects (
+          id, token, path, format, format_config, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        project.id,
+        project.token,
+        project.path,
+        project.format,
+        project.formatConfig,
+        project.createdAt,
+        project.updatedAt,
+      );
+
+    return project;
+  }
+
+  get(id: string): Project | undefined {
+    const row = this.db
+      .prepare<[string], ProjectRow>(
+        `
+        SELECT id, token, path, format, format_config, created_at, updated_at
+        FROM projects
+        WHERE id = ?
+      `,
+      )
+      .get(id);
+    return row === undefined ? undefined : rowToProject(row);
+  }
+
+  getByToken(id: string, token: string): Project | undefined {
+    const project = this.get(id);
+    if (project === undefined) {
+      return undefined;
+    }
+    return tokensEqual(project.token, token) ? project : undefined;
+  }
+
+  list(): readonly Project[] {
+    return this.db
+      .prepare<[], ProjectRow>(
+        `
+        SELECT id, token, path, format, format_config, created_at, updated_at
+        FROM projects
+        ORDER BY created_at ASC, id ASC
+      `,
+      )
+      .all()
+      .map(rowToProject);
+  }
+
+  delete(id: string): boolean {
+    const result = this.db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+    return result.changes > 0;
+  }
+}

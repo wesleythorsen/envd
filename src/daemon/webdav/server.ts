@@ -4,17 +4,16 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { Server } from "node:http";
+import { createHash } from "node:crypto";
 import { createLogger } from "../../shared/logger.js";
+import type { Project, ProjectRepo } from "../../core/project.js";
 
 const log = createLogger("daemon/webdav");
-
-/** Content of the single hardcoded file served in US-1.1. */
-const FILE_CONTENT = "HELLO=world\n";
-const FILE_BYTES = Buffer.from(FILE_CONTENT, "utf-8");
 
 export interface WebdavServerOpts {
   /** TCP port to bind. Pass 0 for an ephemeral port (tests). Default: 1911. */
   port?: number;
+  projectRepo: ProjectRepo;
 }
 
 export interface WebdavServerHandle {
@@ -24,11 +23,29 @@ export interface WebdavServerHandle {
   close(): Promise<void>;
 }
 
-// Fixed-per-server-start timestamp so macOS mount_webdav does not retry.
-// Computed once at module init; stays stable for the life of the process.
-const SERVER_START_TIME = new Date();
-const LAST_MODIFIED = SERVER_START_TIME.toUTCString();
-const ETAG = `"denv-hello-${SERVER_START_TIME.getTime()}"`;
+interface RenderedProjectFile {
+  bytes: Buffer;
+  lastModified: string;
+  etag: string;
+}
+
+type ProjectPath =
+  | { kind: "root" }
+  | { kind: "projects-root" }
+  | { kind: "project-dir"; id: string; token: string }
+  | { kind: "project-env"; id: string; token: string }
+  | { kind: "unknown" };
+
+function renderProjectFile(project: Project): RenderedProjectFile {
+  const text = `# d-env project ${project.id}\n# staged at: ${project.updatedAt}\n`;
+  const bytes = Buffer.from(text, "utf-8");
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  return {
+    bytes,
+    lastModified: new Date(project.updatedAt).toUTCString(),
+    etag: `"${hash}"`,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // XML helpers
@@ -50,11 +67,10 @@ function collectionProps(displayName: string): string {
   );
 }
 
-/** Returns multistatus XML for /hello/.env. */
-function fileProps(): string {
-  const size = FILE_BYTES.length;
+function fileProps(project: Project): string {
+  const rendered = renderProjectFile(project);
   return davPropstat(
-    `        <D:resourcetype/>\n        <D:displayname>.env</D:displayname>\n        <D:getcontenttype>text/plain; charset=utf-8</D:getcontenttype>\n        <D:getcontentlength>${size}</D:getcontentlength>\n        <D:getlastmodified>${LAST_MODIFIED}</D:getlastmodified>\n        <D:getetag>${ETAG}</D:getetag>\n`,
+    `        <D:resourcetype/>\n        <D:displayname>.env</D:displayname>\n        <D:getcontenttype>text/plain; charset=utf-8</D:getcontenttype>\n        <D:getcontentlength>${rendered.bytes.length}</D:getcontentlength>\n        <D:getlastmodified>${rendered.lastModified}</D:getlastmodified>\n        <D:getetag>${rendered.etag}</D:getetag>\n`,
   );
 }
 
@@ -86,33 +102,107 @@ function parseDepth(req: IncomingMessage): number {
   return 1;
 }
 
+function parseProjectPath(path: string): ProjectPath {
+  if (path === "/" || path === "") {
+    return { kind: "root" };
+  }
+
+  if (path === "/p" || path === "/p/") {
+    return { kind: "projects-root" };
+  }
+
+  const projectMatch = /^\/p\/([^/.]+)\.([^/]+)\/?$/.exec(path);
+  if (projectMatch !== null) {
+    const id = projectMatch[1];
+    const token = projectMatch[2];
+    if (id !== undefined && token !== undefined) {
+      return { kind: "project-dir", id, token };
+    }
+  }
+
+  const envMatch = /^\/p\/([^/.]+)\.([^/]+)\/\.env$/.exec(path);
+  if (envMatch !== null) {
+    const id = envMatch[1];
+    const token = envMatch[2];
+    if (id !== undefined && token !== undefined) {
+      return { kind: "project-env", id, token };
+    }
+  }
+
+  return { kind: "unknown" };
+}
+
+function loadProject(
+  projectRepo: ProjectRepo,
+  id: string,
+  token: string,
+): Project | undefined {
+  return projectRepo.getByToken(id, token);
+}
+
 function handlePropfind(
   req: IncomingMessage,
   res: ServerResponse,
   path: string,
+  projectRepo: ProjectRepo,
 ): void {
   const depth = parseDepth(req);
+  const parsedPath = parseProjectPath(path);
 
   let body = "";
 
-  if (path === "/" || path === "") {
-    // Root collection
-    body += davResponse("/", collectionProps("d-env"));
-    if (depth >= 1) {
-      body += davResponse("/hello/", collectionProps("hello"));
+  switch (parsedPath.kind) {
+    case "root":
+      body += davResponse("/", collectionProps("d-env"));
+      if (depth >= 1) {
+        body += davResponse("/p/", collectionProps("p"));
+      }
+      break;
+    case "projects-root":
+      body += davResponse("/p/", collectionProps("p"));
+      if (depth >= 1) {
+        for (const project of projectRepo.list()) {
+          body += davResponse(
+            `/p/${project.id}.${project.token}/`,
+            collectionProps(`${project.id}.${project.token}`),
+          );
+        }
+      }
+      break;
+    case "project-dir": {
+      const project = loadProject(projectRepo, parsedPath.id, parsedPath.token);
+      if (project === undefined) {
+        res.writeHead(404, { "Content-Length": "0" });
+        res.end();
+        return;
+      }
+      const href = `/p/${project.id}.${project.token}/`;
+      body += davResponse(
+        href,
+        collectionProps(`${project.id}.${project.token}`),
+      );
+      if (depth >= 1) {
+        body += davResponse(`${href}.env`, fileProps(project));
+      }
+      break;
     }
-  } else if (path === "/hello" || path === "/hello/") {
-    // /hello/ collection
-    body += davResponse("/hello/", collectionProps("hello"));
-    if (depth >= 1) {
-      body += davResponse("/hello/.env", fileProps());
+    case "project-env": {
+      const project = loadProject(projectRepo, parsedPath.id, parsedPath.token);
+      if (project === undefined) {
+        res.writeHead(404, { "Content-Length": "0" });
+        res.end();
+        return;
+      }
+      body += davResponse(
+        `/p/${project.id}.${project.token}/.env`,
+        fileProps(project),
+      );
+      break;
     }
-  } else if (path === "/hello/.env") {
-    body += davResponse("/hello/.env", fileProps());
-  } else {
-    res.writeHead(404, { "Content-Length": "0" });
-    res.end();
-    return;
+    case "unknown":
+      res.writeHead(404, { "Content-Length": "0" });
+      res.end();
+      return;
   }
 
   const xml = multistatus(body);
@@ -124,15 +214,20 @@ function handlePropfind(
   res.end(xmlBuf);
 }
 
-function handleGet(res: ServerResponse, sendBody: boolean): void {
+function handleGet(
+  res: ServerResponse,
+  project: Project,
+  sendBody: boolean,
+): void {
+  const rendered = renderProjectFile(project);
   res.writeHead(200, {
     "Content-Type": "text/plain; charset=utf-8",
-    "Content-Length": FILE_BYTES.length,
-    "Last-Modified": LAST_MODIFIED,
-    ETag: ETAG,
+    "Content-Length": rendered.bytes.length,
+    "Last-Modified": rendered.lastModified,
+    ETag: rendered.etag,
   });
   if (sendBody) {
-    res.end(FILE_BYTES);
+    res.end(rendered.bytes);
   } else {
     res.end();
   }
@@ -169,7 +264,11 @@ function parsePath(rawUrl: string | undefined): string {
   }
 }
 
-function dispatch(req: IncomingMessage, res: ServerResponse): void {
+function dispatch(
+  projectRepo: ProjectRepo,
+  req: IncomingMessage,
+  res: ServerResponse,
+): void {
   const method = req.method ?? "";
   // Normalize path: strip query string, decode %xx.
   const path = parsePath(req.url);
@@ -183,13 +282,19 @@ function dispatch(req: IncomingMessage, res: ServerResponse): void {
   }
 
   if (method === "PROPFIND") {
-    handlePropfind(req, res, path);
+    handlePropfind(req, res, path, projectRepo);
     return;
   }
 
   if (method === "GET" || method === "HEAD") {
-    if (path === "/hello/.env") {
-      handleGet(res, method === "GET");
+    const parsedPath = parseProjectPath(path);
+    if (parsedPath.kind === "project-env") {
+      const project = loadProject(projectRepo, parsedPath.id, parsedPath.token);
+      if (project !== undefined) {
+        handleGet(res, project, method === "GET");
+        return;
+      }
+      handleNotFound(res);
     } else {
       handleNotFound(res);
     }
@@ -205,12 +310,15 @@ function dispatch(req: IncomingMessage, res: ServerResponse): void {
 // ---------------------------------------------------------------------------
 
 export function startWebdavServer(
-  opts: WebdavServerOpts = {},
+  opts: WebdavServerOpts,
 ): Promise<WebdavServerHandle> {
   const bindPort = opts.port ?? 1911;
+  const projectRepo = opts.projectRepo;
 
   return new Promise((resolve, reject) => {
-    const server: Server = createServer(dispatch);
+    const server: Server = createServer((req, res) => {
+      dispatch(projectRepo, req, res);
+    });
 
     server.once("error", reject);
 
