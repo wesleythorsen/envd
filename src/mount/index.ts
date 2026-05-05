@@ -17,6 +17,11 @@ export async function createMountAdapter(): Promise<MountAdapter> {
     return new DarwinMountAdapter();
   }
 
+  if (platform === "linux") {
+    const { LinuxMountAdapter } = await import("./linux.js");
+    return new LinuxMountAdapter();
+  }
+
   throw new DEnvError(
     `Mount adapter not implemented for platform "${platform}"`,
     {
