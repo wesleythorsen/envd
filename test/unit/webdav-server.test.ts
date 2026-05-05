@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { request } from "undici";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -117,6 +117,8 @@ describe("OPTIONS /", () => {
     expect(res.headers["allow"]).toContain("GET");
     expect(res.headers["allow"]).toContain("HEAD");
     expect(res.headers["allow"]).toContain("PUT");
+    expect(res.headers["allow"]).toContain("LOCK");
+    expect(res.headers["allow"]).toContain("UNLOCK");
     expect(res.headers["ms-author-via"]).toBe("DAV");
     await res.body.dump();
   });
@@ -340,6 +342,63 @@ describe("HEAD /hello/.env", () => {
       getRes.headers["last-modified"],
     );
     expect(getBody).toBe(EXPECTED_ENV);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LOCK / UNLOCK
+// ---------------------------------------------------------------------------
+
+describe("LOCK/UNLOCK project .env", () => {
+  it("returns a synthetic lock token that UNLOCK drops", async () => {
+    const lock = await request(`${base}${projectHref}/.env`, {
+      method: "LOCK",
+      body: `<D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope><D:locktype><D:write/></D:locktype></D:lockinfo>`,
+    });
+    expect(lock.statusCode).toBe(200);
+    expect(lock.headers["timeout"]).toBe("Second-30");
+    const lockToken = String(lock.headers["lock-token"]);
+    expect(lockToken).toMatch(/^<opaquelocktoken:[0-9a-f-]{36}>$/);
+    const xml = await lock.body.text();
+    expect(xml).toContain("<D:lockdiscovery>");
+    expect(xml).toContain(lockToken.slice(1, -1));
+
+    const unlock = await request(`${base}${projectHref}/.env`, {
+      method: "UNLOCK",
+      headers: { "Lock-Token": lockToken },
+    });
+    expect(unlock.statusCode).toBe(204);
+    await unlock.body.dump();
+
+    const secondUnlock = await request(`${base}${projectHref}/.env`, {
+      method: "UNLOCK",
+      headers: { "Lock-Token": lockToken },
+    });
+    expect(secondUnlock.statusCode).toBe(409);
+    await secondUnlock.body.dump();
+  });
+
+  it("expires lock tokens after 30 seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      const lock = await request(`${base}${projectHref}/.env`, {
+        method: "LOCK",
+      });
+      expect(lock.statusCode).toBe(200);
+      const lockToken = String(lock.headers["lock-token"]);
+      await lock.body.dump();
+
+      await vi.advanceTimersByTimeAsync(30_001);
+
+      const unlock = await request(`${base}${projectHref}/.env`, {
+        method: "UNLOCK",
+        headers: { "Lock-Token": lockToken },
+      });
+      expect(unlock.statusCode).toBe(409);
+      await unlock.body.dump();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

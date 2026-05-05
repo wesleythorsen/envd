@@ -4,7 +4,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { Server } from "node:http";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createLogger } from "../../shared/logger.js";
 import { DEnvError } from "../../shared/errors.js";
 import type { Project, ProjectRepo } from "../../core/project.js";
@@ -27,7 +27,8 @@ import { createKeychainAdapter } from "../../core/keychain.js";
 
 const log = createLogger("daemon/webdav");
 const DEFAULT_CACHE_TTL_MS = 60_000;
-const ALLOW_HEADER = "OPTIONS, PROPFIND, GET, HEAD, PUT";
+const LOCK_TTL_MS = 30_000;
+const ALLOW_HEADER = "OPTIONS, PROPFIND, GET, HEAD, PUT, LOCK, UNLOCK";
 
 export interface WebdavServerOpts {
   /** TCP port to bind. Pass 0 for an ephemeral port (tests). Default: 1911. */
@@ -52,12 +53,19 @@ interface RenderedProjectFile {
   etag: string;
 }
 
+interface AdvisoryLock {
+  readonly token: string;
+  readonly expiresAt: number;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
 interface WebdavRuntime {
   readonly projectRepo: ProjectRepo;
   readonly stagingRepo: StagingRepo | undefined;
   readonly providerInstanceRepo: ProviderInstanceRepo | undefined;
   readonly keychain: KeychainAdapter | undefined;
   readonly cache: Cache<SecretMap>;
+  readonly locks: Map<string, AdvisoryLock>;
 }
 
 type ProjectPath =
@@ -258,6 +266,25 @@ function davPropstat(prop: string, status = "HTTP/1.1 200 OK"): string {
   return `    <D:propstat>\n      <D:prop>\n${prop}      </D:prop>\n      <D:status>${status}</D:status>\n    </D:propstat>\n`;
 }
 
+function xmlEscape(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      case "'":
+        return "&apos;";
+      default:
+        return char;
+    }
+  });
+}
+
 /** Returns multistatus XML for a directory resource. */
 function collectionProps(displayName: string): string {
   return davPropstat(
@@ -280,6 +307,12 @@ function multistatus(body: string): string {
     `<?xml version="1.0" encoding="utf-8"?>\n` +
     `<D:multistatus xmlns:D="DAV:">\n${body}</D:multistatus>`
   );
+}
+
+function lockResponseXml(path: string, token: string): string {
+  const escapedPath = xmlEscape(path);
+  const escapedToken = xmlEscape(token);
+  return `<?xml version="1.0" encoding="utf-8"?>\n<D:prop xmlns:D="DAV:">\n  <D:lockdiscovery>\n    <D:activelock>\n      <D:locktype><D:write/></D:locktype>\n      <D:lockscope><D:exclusive/></D:lockscope>\n      <D:depth>0</D:depth>\n      <D:timeout>Second-30</D:timeout>\n      <D:locktoken><D:href>${escapedToken}</D:href></D:locktoken>\n      <D:lockroot><D:href>${escapedPath}</D:href></D:lockroot>\n    </D:activelock>\n  </D:lockdiscovery>\n</D:prop>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -481,6 +514,126 @@ async function handlePut(
   res.end();
 }
 
+function expireLock(
+  locks: Map<string, AdvisoryLock>,
+  path: string,
+  token: string,
+): void {
+  const current = locks.get(path);
+  if (current?.token === token) {
+    locks.delete(path);
+  }
+}
+
+function clearExistingLock(
+  locks: Map<string, AdvisoryLock>,
+  path: string,
+): void {
+  const existing = locks.get(path);
+  if (existing !== undefined) {
+    clearTimeout(existing.timer);
+    locks.delete(path);
+  }
+}
+
+function createAdvisoryLock(
+  runtime: WebdavRuntime,
+  path: string,
+): AdvisoryLock {
+  clearExistingLock(runtime.locks, path);
+
+  const token = `opaquelocktoken:${randomUUID()}`;
+  const timer = setTimeout(() => {
+    expireLock(runtime.locks, path, token);
+  }, LOCK_TTL_MS);
+  timer.unref();
+
+  const lock: AdvisoryLock = {
+    token,
+    expiresAt: Date.now() + LOCK_TTL_MS,
+    timer,
+  };
+  runtime.locks.set(path, lock);
+  return lock;
+}
+
+function getActiveLock(
+  runtime: WebdavRuntime,
+  path: string,
+): AdvisoryLock | undefined {
+  const lock = runtime.locks.get(path);
+  if (lock === undefined) {
+    return undefined;
+  }
+
+  if (lock.expiresAt <= Date.now()) {
+    clearExistingLock(runtime.locks, path);
+    return undefined;
+  }
+
+  return lock;
+}
+
+async function handleLock(
+  req: IncomingMessage,
+  res: ServerResponse,
+  runtime: WebdavRuntime,
+  path: string,
+): Promise<void> {
+  await readRequestBody(req);
+  const lock = createAdvisoryLock(runtime, path);
+  const xml = lockResponseXml(path, lock.token);
+  const xmlBuf = Buffer.from(xml, "utf-8");
+  res.writeHead(200, {
+    "Content-Type": "application/xml; charset=utf-8",
+    "Content-Length": xmlBuf.length,
+    "Lock-Token": `<${lock.token}>`,
+    Timeout: "Second-30",
+  });
+  res.end(xmlBuf);
+}
+
+function parseLockToken(
+  rawHeader: string | string[] | undefined,
+): string | undefined {
+  const raw = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+  if (raw === undefined) {
+    return undefined;
+  }
+
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("<") && trimmed.endsWith(">")) {
+    return trimmed.slice(1, -1);
+  }
+
+  return trimmed;
+}
+
+function handleUnlock(
+  req: IncomingMessage,
+  res: ServerResponse,
+  runtime: WebdavRuntime,
+  path: string,
+): void {
+  const token = parseLockToken(req.headers["lock-token"]);
+  if (token === undefined || token === "") {
+    res.writeHead(400, { "Content-Length": "0" });
+    res.end();
+    return;
+  }
+
+  const lock = getActiveLock(runtime, path);
+  if (lock?.token !== token) {
+    res.writeHead(409, { "Content-Length": "0" });
+    res.end();
+    return;
+  }
+
+  clearExistingLock(runtime.locks, path);
+  res.writeHead(204, { "Content-Length": "0" });
+  res.end();
+}
+
 function ifNoneMatchMatches(
   rawHeader: string | string[] | undefined,
   etag: string,
@@ -630,6 +783,40 @@ async function dispatch(
     return;
   }
 
+  if (method === "LOCK") {
+    const parsedPath = parseProjectPath(path);
+    if (parsedPath.kind === "project-env") {
+      const project = loadProject(projectRepo, parsedPath.id, parsedPath.token);
+      if (project !== undefined) {
+        try {
+          await handleLock(req, res, runtime, path);
+        } catch (err: unknown) {
+          handleInternalError(res, err);
+        }
+        return;
+      }
+      handleNotFound(res);
+    } else {
+      handleNotFound(res);
+    }
+    return;
+  }
+
+  if (method === "UNLOCK") {
+    const parsedPath = parseProjectPath(path);
+    if (parsedPath.kind === "project-env") {
+      const project = loadProject(projectRepo, parsedPath.id, parsedPath.token);
+      if (project !== undefined) {
+        handleUnlock(req, res, runtime, path);
+        return;
+      }
+      handleNotFound(res);
+    } else {
+      handleNotFound(res);
+    }
+    return;
+  }
+
   if (method === "GET" || method === "HEAD") {
     const parsedPath = parseProjectPath(path);
     if (parsedPath.kind === "project-env") {
@@ -653,7 +840,7 @@ async function dispatch(
     return;
   }
 
-  // LOCK, UNLOCK, DELETE, MKCOL — not implemented.
+  // DELETE, MKCOL — not implemented.
   handleMethodNotAllowed(res);
 }
 
@@ -675,6 +862,7 @@ export function startWebdavServer(
         ? undefined
         : createKeychainAdapter()),
     cache: opts.cache ?? createCache<SecretMap>(),
+    locks: new Map<string, AdvisoryLock>(),
   };
 
   return new Promise((resolve, reject) => {
@@ -710,6 +898,10 @@ export function startWebdavServer(
         port,
         close(): Promise<void> {
           return new Promise((res2, rej2) => {
+            for (const lock of runtime.locks.values()) {
+              clearTimeout(lock.timer);
+            }
+            runtime.locks.clear();
             server.close((err) => {
               if (err !== undefined) {
                 rej2(err);
