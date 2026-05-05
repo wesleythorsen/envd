@@ -23,6 +23,7 @@ export interface Cache<T> {
 interface InternalEntry<T> {
   snapshot?: CacheResult<T>;
   pending?: Promise<CacheResult<T>>;
+  invalidated?: boolean;
 }
 
 function validateTtl(ttlMs: number): void {
@@ -59,6 +60,54 @@ export function createCache<T = unknown>(opts: CacheOptions = {}): Cache<T> {
   const entries = new Map<string, InternalEntry<T>>();
   const now = opts.now ?? Date.now;
 
+  function clearPending(projectId: string, entry: InternalEntry<T>): void {
+    if (entries.get(projectId) !== entry) {
+      return;
+    }
+
+    delete entry.pending;
+    if (entry.snapshot === undefined) {
+      delete entry.invalidated;
+      entries.delete(projectId);
+    }
+  }
+
+  function startFetch(
+    projectId: string,
+    entry: InternalEntry<T>,
+    fetcher: () => Promise<T>,
+  ): Promise<CacheResult<T>> {
+    const pending = callFetcher(fetcher)
+      .then((value) => {
+        const snapshot: CacheResult<T> = {
+          value,
+          fetchedAt: now(),
+        };
+
+        if (entry.invalidated === true) {
+          delete entry.pending;
+          delete entry.snapshot;
+          delete entry.invalidated;
+          return startFetch(projectId, entry, fetcher);
+        }
+
+        if (entries.get(projectId) === entry) {
+          entry.snapshot = snapshot;
+          delete entry.pending;
+        }
+
+        return snapshot;
+      })
+      .catch((error: unknown) => {
+        clearPending(projectId, entry);
+        throw error;
+      });
+
+    entry.pending = pending;
+    entries.set(projectId, entry);
+    return pending;
+  }
+
   return {
     get(projectId, fetcher, getOpts) {
       validateTtl(getOpts.ttlMs);
@@ -77,37 +126,19 @@ export function createCache<T = unknown>(opts: CacheOptions = {}): Cache<T> {
       }
 
       const entry = existing ?? {};
-      const pending = callFetcher(fetcher)
-        .then((value) => {
-          const snapshot: CacheResult<T> = {
-            value,
-            fetchedAt: now(),
-          };
-
-          if (entries.get(projectId) === entry) {
-            entry.snapshot = snapshot;
-            delete entry.pending;
-          }
-
-          return snapshot;
-        })
-        .catch((error: unknown) => {
-          if (entries.get(projectId) === entry) {
-            delete entry.pending;
-            if (entry.snapshot === undefined) {
-              entries.delete(projectId);
-            }
-          }
-
-          throw error;
-        });
-
-      entry.pending = pending;
-      entries.set(projectId, entry);
-      return pending;
+      return startFetch(projectId, entry, fetcher);
     },
 
     invalidate(projectId) {
+      const entry = entries.get(projectId);
+      if (entry === undefined) {
+        return;
+      }
+      if (entry.pending !== undefined) {
+        delete entry.snapshot;
+        entry.invalidated = true;
+        return;
+      }
       entries.delete(projectId);
     },
   };
