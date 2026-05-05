@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
+import { lstatSync, readlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
   ControlClient,
@@ -7,14 +7,12 @@ import type {
   ProjectStatusDetail,
 } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import { writeCliError } from "../error-output.js";
 import { createMountAdapter } from "../../mount/index.js";
 import { mountPath } from "../../shared/paths.js";
 import type { MountAdapter } from "../../mount/adapter.js";
-
-const PROJECT_FILE = ".d-env.json";
-const ENV_FILE = ".env";
+import { ENV_FILE, readProjectFile } from "../project-files.js";
 
 interface StatusOptions {
   readonly json?: boolean;
@@ -26,11 +24,6 @@ interface StatusDeps {
   readonly createClient?: () => ControlClient;
   readonly mountAdapter?: MountAdapter;
   readonly createMountAdapter?: () => Promise<MountAdapter>;
-}
-
-interface ProjectFile {
-  readonly projectId: string;
-  readonly version: 1;
 }
 
 export interface StatusResult {
@@ -70,19 +63,6 @@ export interface StatusResult {
   } | null;
 }
 
-function parseProjectFile(path: string): ProjectFile {
-  const raw = readFileSync(path, "utf-8");
-  // as-cast justified: .d-env.json is an external serialization boundary.
-  const parsed = JSON.parse(raw) as Record<string, unknown>;
-  if (typeof parsed["projectId"] !== "string" || parsed["version"] !== 1) {
-    throw new DEnvError(".d-env.json is malformed", {
-      code: "usage_error",
-      details: { path },
-    });
-  }
-  return { projectId: parsed["projectId"], version: 1 };
-}
-
 function readSymlinkTarget(path: string): string | null {
   try {
     const stat = lstatSync(path);
@@ -106,7 +86,7 @@ function resolveClient(deps: StatusDeps): ControlClient | null {
   try {
     return (deps.createClient ?? createControlClient)();
   } catch (err: unknown) {
-    if (err instanceof DEnvError && err.code === "daemon_unreachable") {
+    if (err instanceof EnvdError && err.code === "daemon_unreachable") {
       return null;
     }
     throw err;
@@ -184,12 +164,11 @@ async function projectStatus(
   projectDir: string,
   client: ControlClient | null,
 ): Promise<StatusResult["project"]> {
-  const projectFilePath = join(projectDir, PROJECT_FILE);
-  if (!existsSync(projectFilePath)) {
+  const projectFile = readProjectFile(projectDir);
+  if (projectFile === null) {
     return null;
   }
 
-  const projectFile = parseProjectFile(projectFilePath);
   const envPath = join(projectDir, ENV_FILE);
   const symlinkTarget = readSymlinkTarget(envPath);
   let project: ProjectDetail | null = null;
@@ -200,7 +179,7 @@ async function projectStatus(
       project = await client.getProject(projectFile.projectId);
       details = await client.getProjectStatus(projectFile.projectId);
     } catch (err: unknown) {
-      if (!(err instanceof DEnvError && err.code === "not_found")) {
+      if (!(err instanceof EnvdError && err.code === "not_found")) {
         throw err;
       }
     }
@@ -319,7 +298,7 @@ function printHuman(status: StatusResult): void {
 
 export function buildStatusCommand(): Command {
   return new Command("status")
-    .description("Show d-env status")
+    .description("Show envd status")
     .option("--json", "JSON output")
     .action(async (opts: StatusOptions) => {
       try {

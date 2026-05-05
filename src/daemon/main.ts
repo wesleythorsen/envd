@@ -17,13 +17,11 @@ import { createCache } from "../core/cache.js";
 import { loadOrCreateDaemonKey } from "../core/daemon-key.js";
 import { openState } from "../core/state.js";
 import { ProjectRepo } from "../core/project.js";
-import {
-  createEncryptedStagingCodec,
-  StagingRepo,
-} from "../core/staging.js";
+import { createEncryptedStagingCodec, StagingRepo } from "../core/staging.js";
 import { ProviderInstanceRepo } from "../core/provider-instance.js";
 import { createKeychainAdapter } from "../core/keychain.js";
 import type { SecretMap } from "../providers/base.js";
+import { LOG_FORMAT_ENV_VAR } from "../shared/product.js";
 
 // createRequire is the stable way to load JSON in ESM without import assertions
 const require = createRequire(import.meta.url);
@@ -107,7 +105,7 @@ function checkPidFile(): void {
     process.kill(existingPid, 0);
     // Process is alive — refuse to start.
     log.error({
-      msg: "d-envd already running; refusing to start",
+      msg: "envdd already running; refusing to start",
       data: { pid: existingPid },
     });
     process.exit(1);
@@ -144,15 +142,15 @@ function cleanupFiles(): void {
 
 async function main(): Promise<void> {
   ensureStateDir();
-  if (process.env["D_ENV_LOG_FORMAT"] === undefined) {
-    process.env["D_ENV_LOG_FORMAT"] = "json";
+  if (process.env[LOG_FORMAT_ENV_VAR] === undefined) {
+    process.env[LOG_FORMAT_ENV_VAR] = "json";
   }
   const logSink = new RotatingFileLogSink(daemonLogFile());
   setLogWriter((line) => {
     logSink.write(line);
   });
 
-  log.info({ msg: `d-envd starting`, data: { version, pid: process.pid } });
+  log.info({ msg: `envdd starting`, data: { version, pid: process.pid } });
 
   checkPidFile();
   writePidFile();
@@ -183,7 +181,7 @@ async function main(): Promise<void> {
       return;
     }
     shutdownInProgress = true;
-    log.info({ msg: "d-envd shutting down" });
+    log.info({ msg: "envdd shutting down" });
     Promise.all([webdav.close(), ctrl.close()])
       .catch((err: unknown) => {
         log.error({
@@ -233,17 +231,17 @@ async function main(): Promise<void> {
   writePortsFile(control.port, webdav.port);
 
   log.info({
-    msg: "d-envd ready",
+    msg: "envdd ready",
     data: { webdavPort: webdav.port, controlPort: control.port },
   });
 
   process.on("SIGTERM", () => {
-    log.info({ msg: "d-envd received SIGTERM, shutting down" });
+    log.info({ msg: "envdd received SIGTERM, shutting down" });
     triggerShutdown(webdav, control);
   });
 }
 
 main().catch((err: unknown) => {
-  process.stderr.write(`d-envd fatal: ${String(err)}\n`);
+  process.stderr.write(`envdd fatal: ${String(err)}\n`);
   process.exit(1);
 });

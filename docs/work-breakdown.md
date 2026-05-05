@@ -46,12 +46,12 @@ These establish the skeleton. Almost everything else depends on this wave. Keep 
 
 ### US-0.1 — CLI + daemon binaries wired up with a stub `version` command
 
-**Goal.** Running `d-env version` prints a version string. Running `d-envd` starts a process that logs a line and exits on SIGTERM. The build produces two executables.
+**Goal.** Running `envd version` prints a version string. Running `envdd` starts a process that logs a line and exits on SIGTERM. The build produces two executables.
 
 **Acceptance criteria.**
-- `package.json` has `"bin": { "d-env": "dist/cli/main.js", "d-envd": "dist/daemon/main.js" }`.
+- `package.json` has `"bin": { "envd": "dist/cli/main.js", "envdd": "dist/daemon/main.js" }`.
 - `src/cli/main.ts` exists and prints `{ cli: "<pkg version>" }` (JSON) on `version`.
-- `src/daemon/main.ts` exists, logs `d-envd starting (version=<pkg version>, pid=<pid>)`, installs a SIGTERM handler, and exits cleanly.
+- `src/daemon/main.ts` exists, logs `envdd starting (version=<pkg version>, pid=<pid>)`, installs a SIGTERM handler, and exits cleanly.
 - Both entrypoints start with a `#!/usr/bin/env node` shebang.
 - `npm run build && node dist/cli/main.js version` prints the JSON.
 - `npm run build && node dist/daemon/main.js &` runs, SIGTERM stops it cleanly.
@@ -79,13 +79,13 @@ These establish the skeleton. Almost everything else depends on this wave. Keep 
 
 **Acceptance criteria.**
 - `src/shared/paths.ts` exports typed functions: `stateDir()`, `pidFile()`, `portsFile()`, `controlTokenFile()`, `logDir()`, `mountPath()` (platform-aware).
-- Honors `D_ENV_HOME` env var override; defaults to `~/.d-env/`.
+- Honors `ENVD_HOME` env var override; defaults to `~/.envd/`.
 - Creates directories on demand via a helper `ensureStateDir()`.
 - Unit tests cover the override and the default.
 
 **Tasks.**
-1. Add `os.homedir()` / `process.env.D_ENV_HOME` resolution.
-2. Platform branch for `mountPath`: `~/.d-env/mount` (darwin/linux), throw on unsupported; allow an explicit mount-path override for local testing or future config.
+1. Add `os.homedir()` / `process.env.ENVD_HOME` resolution.
+2. Platform branch for `mountPath`: `~/.envd/mount` (darwin/linux), throw on unsupported; allow an explicit mount-path override for local testing or future config.
 3. Tests in `test/unit/paths.test.ts` using a tmpdir and env manipulation.
 
 **Depends on.** US-0.1 (needs the source tree).
@@ -101,16 +101,16 @@ These establish the skeleton. Almost everything else depends on this wave. Keep 
 **Goal.** Structured logging with levels, and a single canonical `ErrorCode` enum used across CLI ↔ daemon.
 
 **Acceptance criteria.**
-- `src/shared/logger.ts` exports `createLogger(scope: string)` returning an object with `debug/info/warn/error` methods. Output is JSON per line to stderr when `D_ENV_LOG_FORMAT=json`, otherwise a concise human line.
-- Respects `D_ENV_LOG_LEVEL` (`debug|info|warn|error`), default `info`.
+- `src/shared/logger.ts` exports `createLogger(scope: string)` returning an object with `debug/info/warn/error` methods. Output is JSON per line to stderr when `ENVD_LOG_FORMAT=json`, otherwise a concise human line.
+- Respects `ENVD_LOG_LEVEL` (`debug|info|warn|error`), default `info`.
 - **Never logs secret values.** To make this enforceable, the logger accepts `{ msg, data }` where `data` is an object; there's **no positional variadic** API. Agents will have to serialize explicitly.
-- `src/shared/errors.ts` exports `ErrorCode` (string-literal union), `DEnvError` class (extends `Error`, carries `code`, `details`, `cause`).
+- `src/shared/errors.ts` exports `ErrorCode` (string-literal union), `EnvdError` class (extends `Error`, carries `code`, `details`, `cause`).
 - Tests confirm redaction guardrails and JSON vs text formatting.
 
 **Tasks.**
 1. Logger implementation (no deps).
 2. Error codes: start with `daemon_unreachable | usage_error | provider_unreachable | provider_auth | commit_conflict | mount_failed | not_initialized | internal | bad_dotenv | unauthorized`.
-3. Test: assert JSON structure, level filtering, and `DEnvError` round-trip.
+3. Test: assert JSON structure, level filtering, and `EnvdError` round-trip.
 
 **Depends on.** US-0.1.
 
@@ -154,13 +154,13 @@ These can run in parallel. They each prove a core assumption.
 - `PROPFIND /` and `PROPFIND /hello` return valid WebDAV multistatus XML listing `/hello/.env`.
 - `GET /hello/.env` returns `HELLO=world` with `Content-Type: text/plain; charset=utf-8` and `Last-Modified` set.
 - `HEAD /hello/.env` matches `GET` headers.
-- `d-envd` wires `startWebdavServer()` at boot and logs the port.
+- `envdd` wires `startWebdavServer()` at boot and logs the port.
 - Unit tests hit the server over loopback using `undici` and assert responses.
 
 **Tasks.**
 1. Evaluate `webdav-server@v2`. Budget: 30 minutes. If it cleanly exposes a custom filesystem with `readDir` / `openReadStream`, use it. If its API fights a dynamic in-memory layout, skip it and hand-roll.
 2. Implement the server (either path).
-3. Wire into `d-envd` `main()`.
+3. Wire into `envdd` `main()`.
 4. Test: mount isn't tested here; only the HTTP surface.
 
 **Depends on.** US-0.1, US-0.2, US-0.3.
@@ -181,12 +181,12 @@ These can run in parallel. They each prove a core assumption.
 - `src/mount/adapter.ts` defines the `MountAdapter` interface from [extension-points.md](extension-points.md).
 - `src/mount/darwin.ts` implements it by shelling out to `mount_webdav` / `umount`.
 - `isMounted(path)` inspects `mount` output (or `diskutil info`) rather than just checking `fs.stat` (which would be fooled by an empty dir).
-- The adapter module is only imported on darwin — use a factory in `src/mount/index.ts` that picks the adapter based on `process.platform` and throws a `DEnvError { code: 'mount_failed' }` on unsupported platforms.
-- Integration test gated on `process.platform === 'darwin'` (use `it.skipIf`): start the WebDAV server from US-1.1, mount it into a tmp `/Volumes/d-env-smoke-<pid>`, read `hello/.env`, assert content, unmount.
+- The adapter module is only imported on darwin — use a factory in `src/mount/index.ts` that picks the adapter based on `process.platform` and throws a `EnvdError { code: 'mount_failed' }` on unsupported platforms.
+- Integration test gated on `process.platform === 'darwin'` (use `it.skipIf`): start the WebDAV server from US-1.1, mount it into a tmp `/Volumes/envd-smoke-<pid>`, read `hello/.env`, assert content, unmount.
 
 **Tasks.**
 1. Shell-out helper that uses `node:child_process` `execFile` (not `exec`, to avoid shell injection), returns `{ stdout, stderr, code }`.
-2. `mount(url, path)`: `mkdir -p` the mount point, call `mount_webdav -S -v d-env <url> <path>`, verify with `isMounted`.
+2. `mount(url, path)`: `mkdir -p` the mount point, call `mount_webdav -S -v envd <url> <path>`, verify with `isMounted`.
 3. `unmount(path)`: call `umount <path>`; retry once on `EBUSY`.
 4. Integration test (skipped on non-macOS).
 
@@ -210,7 +210,7 @@ These can run in parallel. They each prove a core assumption.
 - All requests require `Authorization: Bearer <token>` matching a value loaded from `paths.controlTokenFile()`. Missing/wrong token → 401 with `{ error: { code: "unauthorized" } }`. `GET /v1/health` is still auth-gated — no public endpoints in v1.
 - Health/version tokens are asserted in unit tests (pass a generated token at startup, hit with/without it).
 - Daemon boot generates a random token and writes it to `controlTokenFile()` with mode `0600` if the file doesn't exist.
-- Wired into `d-envd` alongside the WebDAV server.
+- Wired into `envdd` alongside the WebDAV server.
 
 **Tasks.**
 1. Use `node:http` directly. No Fastify.
@@ -235,7 +235,7 @@ These can run in parallel. They each prove a core assumption.
 **Acceptance criteria.**
 - `src/ipc/control-client.ts` exports `createControlClient(opts?)` returning a typed client with methods per endpoint — initially only `health()` and `version()`.
 - Reads the port from `paths.portsFile()` and the token from `paths.controlTokenFile()`.
-- Returns a distinct error type (`DEnvError { code: "daemon_unreachable" }`) on ECONNREFUSED — distinguish it from other errors so the CLI can special-case it.
+- Returns a distinct error type (`EnvdError { code: "daemon_unreachable" }`) on ECONNREFUSED — distinguish it from other errors so the CLI can special-case it.
 - Uses `undici` with a short default timeout (2s for these two endpoints).
 - Tests use `startControlServer()` from US-2.1 in-process to verify end-to-end.
 
@@ -268,18 +268,18 @@ These can run in parallel. They each prove a core assumption.
 **Depends on.** US-1.1, US-1.2.
 
 **Notes for the agent.**
-- Prefer ephemeral mount paths like `/Volumes/d-env-smoke-<pid>` so the script can be rerun without cleanup.
+- Prefer ephemeral mount paths like `/Volumes/envd-smoke-<pid>` so the script can be rerun without cleanup.
 - Always unmount in a `finally`. A stuck mount is painful to clean up.
 
 ---
 
 ### US-2.3 — CLI daemon lifecycle commands
 
-**Goal.** `d-env daemon start|stop|status|restart` works.
+**Goal.** `envd daemon start|stop|status|restart` works.
 
 **Acceptance criteria.**
 - Commands defined in `src/cli/commands/daemon.ts`.
-- `start` spawns `d-envd` as a detached child (`child_process.spawn` with `{ detached: true, stdio: "ignore" }`), unrefs, writes PID, exits 0. Idempotent: if already running, prints a message and exits 0.
+- `start` spawns `envdd` as a detached child (`child_process.spawn` with `{ detached: true, stdio: "ignore" }`), unrefs, writes PID, exits 0. Idempotent: if already running, prints a message and exits 0.
 - `stop` reads PID, calls control-API `POST /v1/shutdown` (add this endpoint as part of this story), waits up to 5s for the process to exit, falls back to SIGTERM, then SIGKILL. Idempotent: if not running, exits 0.
 - `status` shows: running?, PID, ports, daemon version, uptime.
 - `restart` = stop + start with a small settle delay.
@@ -332,7 +332,7 @@ These can run in parallel. They each prove a core assumption.
 - New migration `0002_projects.ts` creates the `projects` table per [daemon-spec.md](daemon-spec.md) (skip the `provider_instance_id` column for now; add it in US-4.4's migration).
 - `src/core/project.ts` exports a `ProjectRepo` with `create(input)`, `get(id)`, `getByToken(id, token)`, `list()`, `delete(id)`. Pure SQL, no HTTP.
 - `create()` generates `id` (UUID v4) and `token` (32-byte hex).
-- Validates `path` is absolute and exists; throws `DEnvError { code: "usage_error" }` otherwise.
+- Validates `path` is absolute and exists; throws `EnvdError { code: "usage_error" }` otherwise.
 - Unit tests for each method with an in-memory SQLite DB.
 
 **Depends on.** US-3.1.
@@ -368,7 +368,7 @@ These can run in parallel. They each prove a core assumption.
 
 **Acceptance criteria.**
 - Remove `/hello/.env`.
-- `GET /p/<id>.<tok>/.env` returns `# d-env project <id>\n# staged at: <timestamp>\n`.
+- `GET /p/<id>.<tok>/.env` returns `# envd project <id>\n# staged at: <timestamp>\n`.
 - `PROPFIND /` lists `/p/` as a directory; `PROPFIND /p/` lists all projects' subpaths; `PROPFIND /p/<id>.<tok>/` lists `.env`.
 - Mismatched token → `404` (not 401/403; avoid enumeration).
 - Unknown id → `404`.
@@ -384,30 +384,30 @@ These can run in parallel. They each prove a core assumption.
 
 ## Wave 5 — CLI project commands
 
-### US-3.5 — `d-env init` (minimum viable)
+### US-3.5 — `envd init` (minimum viable)
 
-**Goal.** `d-env init` in a fresh directory registers the project, creates the symlink, writes `.d-env.json`, and ensures the mount exists.
+**Goal.** `envd init` in a fresh directory registers the project, creates the symlink, writes `.envd.json`, and ensures the mount exists.
 
 **Acceptance criteria.**
 - Prompts for confirmation (unless `--yes`); no provider prompts yet (those come in US-4.10).
 - Creates the mount if missing (on macOS).
 - Calls `POST /v1/projects` with the current dir.
-- Writes `./.d-env.json` with `{ projectId, version: 1 }`. The token is **not** stored here — it lives only in the daemon state.
+- Writes `./.envd.json` with `{ projectId, version: 1 }`. The token is **not** stored here — it lives only in the daemon state.
 - Creates `./.env` symlink pointing to the mount path.
 - Adds `.env` to `.gitignore` if not already listed (creates `.gitignore` if missing).
-- Idempotent: re-running finds the existing `.d-env.json`, verifies the daemon still has the project, recreates the symlink if missing, and exits 0 with a status summary.
+- Idempotent: re-running finds the existing `.envd.json`, verifies the daemon still has the project, recreates the symlink if missing, and exits 0 with a status summary.
 - Integration test: start daemon, init in a tmpdir, assert symlink target + registry entry.
 
 **Depends on.** US-1.2, US-2.3, US-3.3.
 
 **Notes for the agent.**
 - Symlink creation: `fs.symlinkSync(target, path)`. Handle `EEXIST` by stat-checking the existing path — only replace if it's a symlink we own.
-- **Do not** write the project token to `.d-env.json`. That file may be committed by mistake; the token should never be there. The CLI fetches the symlink target fresh from the daemon on each `link` instead.
+- **Do not** write the project token to `.envd.json`. That file may be committed by mistake; the token should never be there. The CLI fetches the symlink target fresh from the daemon on each `link` instead.
 - If the mount doesn't exist and the user's on Linux, print a helpful message pointing to the (unfinished) Linux support story and exit non-zero.
 
 ---
 
-### US-3.6 — `d-env status`
+### US-3.6 — `envd status`
 
 **Goal.** A quick "is everything working?" readout.
 
@@ -421,12 +421,12 @@ These can run in parallel. They each prove a core assumption.
 
 ---
 
-### US-3.7 — `d-env link` / `d-env unlink`
+### US-3.7 — `envd link` / `envd unlink`
 
-**Goal.** Repair-or-remove flow for teams cloning a repo that already has `.d-env.json`.
+**Goal.** Repair-or-remove flow for teams cloning a repo that already has `.envd.json`.
 
 **Acceptance criteria.**
-- `link`: reads `.d-env.json`, asks daemon for the project's mount path, creates the symlink. If the daemon doesn't know the project, error with guidance (`this project needs to be re-initialized on this machine with 'd-env init'`).
+- `link`: reads `.envd.json`, asks daemon for the project's mount path, creates the symlink. If the daemon doesn't know the project, error with guidance (`this project needs to be re-initialized on this machine with 'envd init'`).
 - `unlink`: removes the symlink. `--purge` also deletes the project from the daemon registry (uses `DELETE /v1/projects/:id`).
 - Tests cover both.
 
@@ -489,7 +489,7 @@ Many of these parallelize.
 
 **Notes for the agent.**
 - Atomic write: write to `<path>.tmp-<pid>`, `fs.renameSync` over target. Guarantees POSIX atomicity.
-- File format: top-level JSON object, keys strings, values strings. Reject anything else with `DEnvError { code: "provider_unreachable" }` + `cause`.
+- File format: top-level JSON object, keys strings, values strings. Reject anything else with `EnvdError { code: "provider_unreachable" }` + `cause`.
 
 ---
 
@@ -522,7 +522,7 @@ Many of these parallelize.
 
 ---
 
-### US-4.6 — CLI: `d-env provider list/add/remove/test`
+### US-4.6 — CLI: `envd provider list/add/remove/test`
 
 **Goal.** Interactive CLI for managing provider instances.
 
@@ -570,7 +570,7 @@ Many of these parallelize.
 - Round-trip: `parse(render(x)) === x` for any valid map (when using the same opts).
 - Supports: unquoted, single-quoted, double-quoted values; escapes `\n`, `\r`, `\t`, `\\`, `\"` inside double quotes; preserves literal text inside single quotes; trims trailing whitespace.
 - Tolerant on parse: ignores blank lines and `#` comments.
-- Rejects duplicate keys in parse with a `DEnvError { code: "bad_dotenv" }`.
+- Rejects duplicate keys in parse with a `EnvdError { code: "bad_dotenv" }`.
 - Render opts: `quote: "always" | "when-needed"`, `sortKeys: "alphabetical" | "insertion"`.
 - Extensive unit tests covering edge cases: newlines in values, unicode, empty values, keys with dots, RFC-violating inputs.
 
@@ -595,7 +595,7 @@ Many of these parallelize.
   4. `secretsKind.render(map, project.formatConfig)`.
   5. Return with `ETag` = sha256 of bytes, `Last-Modified` = cache `fetchedAt`.
 - Support `If-None-Match` → `304`.
-- If `instance.fetch()` throws, return 503 with `X-DEnv-Error: provider_unreachable`.
+- If `instance.fetch()` throws, return 503 with `X-Envd-Error: provider_unreachable`.
 - Integration test: `local-file` provider with a JSON fixture, end-to-end read returns expected `.env` bytes.
 
 **Depends on.** US-3.4, US-4.3, US-4.7, US-4.8.
@@ -606,7 +606,7 @@ Many of these parallelize.
 
 ---
 
-### US-4.10 — `d-env init` prompts for provider instance
+### US-4.10 — `envd init` prompts for provider instance
 
 **Goal.** Init walks the user through picking or creating a provider instance.
 
@@ -630,15 +630,15 @@ Many of these parallelize.
 **Acceptance criteria.**
 - `src/core/keychain.ts` exports a `KeychainAdapter` with `set(service, account, secret)`, `get(service, account)`, `delete(service, account)`.
 - macOS impl shells out to the `security` CLI — don't adopt `keytar` unless there's a strong reason.
-- Linux impl: shell out to `secret-tool` if present; otherwise encrypted-file fallback at `~/.d-env/secrets.enc` sealed with an age key stored in-memory only for the daemon lifetime. Document the limitation in the fallback path.
+- Linux impl: shell out to `secret-tool` if present; otherwise encrypted-file fallback at `~/.envd/secrets.enc` sealed with an age key stored in-memory only for the daemon lifetime. Document the limitation in the fallback path.
 - Replace the in-memory stub from US-4.5.
-- Unit tests: mock `child_process` for the shell-out paths; real-keychain tests gated on platform + env var `D_ENV_TEST_KEYCHAIN=1`.
+- Unit tests: mock `child_process` for the shell-out paths; real-keychain tests gated on platform + env var `ENVD_TEST_KEYCHAIN=1`.
 
 **Depends on.** US-4.5.
 
 **Notes for the agent.**
 - `security add-generic-password -s <svc> -a <acct> -w <secret> -U`. `-U` means update if present.
-- Never pass secrets on an argv — write them to a tempfile and pass `-w @tempfile`. Actually, `security` doesn't support `@` for `-w`; the only safe path is to use `security` with `-w -` and stdin. Verify this when writing; if `security` only accepts the secret via argv, use a detached `spawn` where the secret is in the env var `D_ENV_SECRET` and invoke a one-line shell wrapper that `exec`s `security` with the value. Prefer stdin.
+- Never pass secrets on an argv — write them to a tempfile and pass `-w @tempfile`. Actually, `security` doesn't support `@` for `-w`; the only safe path is to use `security` with `-w -` and stdin. Verify this when writing; if `security` only accepts the secret via argv, use a detached `spawn` where the secret is in the env var `ENVD_SECRET` and invoke a one-line shell wrapper that `exec`s `security` with the value. Prefer stdin.
 
 ---
 
@@ -680,7 +680,7 @@ Many of these parallelize.
 
 ### US-5.4 — Doppler provider `test()`
 
-**Goal.** `d-env provider test <id>` confirms creds work.
+**Goal.** `envd provider test <id>` confirms creds work.
 
 **Acceptance criteria.**
 - Cheap call to `v3/me` (or the current equivalent).
@@ -772,7 +772,7 @@ Many of these parallelize.
 
 **Acceptance criteria.**
 - Support `PUT /p/<id>.<tok>/.env`.
-- Parse body with the `.env` parser (US-4.8); on bad input return `400` + `X-DEnv-Error: bad_dotenv`.
+- Parse body with the `.env` parser (US-4.8); on bad input return `400` + `X-Envd-Error: bad_dotenv`.
 - Overwrite the project's staging (full-replace semantics — the PUT represents the desired final state).
 - Return `204`.
 - Integration test: mount in-memory WebDAV via `undici`, PUT a `.env`, assert staging in the DB matches.
@@ -844,7 +844,7 @@ Many of these parallelize.
 
 ---
 
-### US-6.7 — CLI: `d-env diff`
+### US-6.7 — CLI: `envd diff`
 
 **Goal.** Print the diff, git-style.
 
@@ -890,9 +890,9 @@ Many of these parallelize.
 
 ---
 
-### US-7.3 — CLI: `d-env commit`
+### US-7.3 — CLI: `envd commit`
 
-**Goal.** `d-env commit -m "..."` works end-to-end.
+**Goal.** `envd commit -m "..."` works end-to-end.
 
 **Acceptance criteria.**
 - Flags: `-m / --message`, `--theirs`, `--ours`, `--json`, `--yes` (skip the "about to push these keys:" confirmation).
@@ -904,9 +904,9 @@ Many of these parallelize.
 
 ---
 
-### US-7.4 — CLI: `d-env pull`
+### US-7.4 — CLI: `envd pull`
 
-**Goal.** `d-env pull [--force] [--dry-run]`.
+**Goal.** `envd pull [--force] [--dry-run]`.
 
 **Acceptance criteria.**
 - `--dry-run` prints what *would* change, doesn't call pull endpoint (or calls a dry-run variant — simpler: CLI just fetches staging+snapshot diff, prints, doesn't call pull).
@@ -958,9 +958,9 @@ These are parallelizable among themselves once the preceding waves land.
 
 ### US-8.4 — Log file output + rotation
 
-- `~/.d-env/logs/d-envd.log` as the default log sink when daemon is detached.
+- `~/.envd/logs/envdd.log` as the default log sink when daemon is detached.
 - Simple size-based rotation (5MB × 5 files), no dependency.
-- Add `GET /v1/logs?tail=N` and `?follow=true` (SSE) for `d-env daemon logs`.
+- Add `GET /v1/logs?tail=N` and `?follow=true` (SSE) for `envd daemon logs`.
 
 **Depends on.** US-0.3, US-2.1.
 
@@ -986,9 +986,9 @@ These are parallelizable among themselves once the preceding waves land.
 
 ## Wave 11 — DX polish (M9)
 
-### US-9.1 — `d-env daemon install|uninstall` (launchd)
+### US-9.1 — `envd daemon install|uninstall` (launchd)
 
-- Writes `~/Library/LaunchAgents/com.d-env.daemon.plist`.
+- Writes `~/Library/LaunchAgents/com.envd.daemon.plist`.
 - `launchctl load/unload`.
 - Tests on macOS only; gated.
 
@@ -996,9 +996,9 @@ These are parallelizable among themselves once the preceding waves land.
 
 ---
 
-### US-9.2 — `d-env daemon install|uninstall` (systemd --user)
+### US-9.2 — `envd daemon install|uninstall` (systemd --user)
 
-- `~/.config/systemd/user/d-envd.service`.
+- `~/.config/systemd/user/envdd.service`.
 - `systemctl --user enable/start/disable/stop`.
 - Gated on linux.
 
@@ -1006,7 +1006,7 @@ These are parallelizable among themselves once the preceding waves land.
 
 ---
 
-### US-9.3 — Rich `d-env status`
+### US-9.3 — Rich `envd status`
 
 - Merges daemon + mount + project + staging + last-fetch + provider-health into one readable block.
 - `--json` supports the same data.
@@ -1125,10 +1125,10 @@ These are parallelizable among themselves once the preceding waves land.
 When delegating a story to a Sonnet sub-agent, use approximately this shape:
 
 ```
-You're implementing user story <US-X.Y> for the d-env project.
+You're implementing user story <US-X.Y> for the envd project.
 
 Context:
-- Repo: /Users/WThorsen/repos/github.com/wesleythorsen/d-env
+- Repo: /Users/WThorsen/repos/github.com/wesleythorsen/envd
 - Read first: docs/session-handoff.md (cold-start brief)
 - Spec docs relevant to this story: <pick from cli-spec.md, daemon-spec.md,
   extension-points.md based on story>

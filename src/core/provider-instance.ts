@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "better-sqlite3";
-import { DEnvError } from "../shared/errors.js";
+import { EnvdError } from "../shared/errors.js";
 
 export interface ProviderInstanceRecord {
   readonly id: string;
@@ -42,7 +42,7 @@ function rowToProviderInstance(
 
 function validateNonEmpty(value: string, field: "provider" | "name"): string {
   if (value.trim() === "") {
-    throw new DEnvError(`${field} must be a non-empty string`, {
+    throw new EnvdError(`${field} must be a non-empty string`, {
       code: "usage_error",
     });
   }
@@ -124,7 +124,7 @@ export class ProviderInstanceRepo {
       .get(id);
 
     if ((projectCount?.count ?? 0) > 0) {
-      throw new DEnvError("provider instance is in use by a project", {
+      throw new EnvdError("provider instance is in use by a project", {
         code: "usage_error",
         details: { providerInstanceId: id },
       });

@@ -4,7 +4,7 @@
 
 ## The 60-second pitch
 
-`d-env` replaces static `.env` files with a **virtual `.env`** backed by a local daemon. The real values live in a pluggable secrets backend (e.g. Doppler). The developer's app code is unchanged — it still does `dotenv.config()` and reads `./.env`. Behind the scenes, `.env` is a symlink into a WebDAV volume that our local daemon serves. Reads pull from the backend; writes are staged for review and pushed via a CLI `commit`.
+`envd` replaces static `.env` files with a **virtual `.env`** backed by a local daemon. The real values live in a pluggable secrets backend (e.g. Doppler). The developer's app code is unchanged — it still does `dotenv.config()` and reads `./.env`. Behind the scenes, `.env` is a symlink into a WebDAV volume that our local daemon serves. Reads pull from the backend; writes are staged for review and pushed via a CLI `commit`.
 
 ## Why WebDAV specifically
 
@@ -18,8 +18,8 @@ We ruled out plain symlinks (no event on read), FUSE (third-party install), NFS 
 
 - **TypeScript**, Node ≥ 24, ESM.
 - Single npm package, two binaries:
-  - `d-env` — the CLI (short-lived).
-  - `d-envd` — the daemon (long-running, per-user).
+  - `envd` — the CLI (short-lived).
+  - `envdd` — the daemon (long-running, per-user).
 - The daemon owns all state. The CLI is a thin client that speaks to the daemon over a local control HTTP API.
 
 See [architecture.md](architecture.md) for the component diagram and [daemon-spec.md](daemon-spec.md) for endpoints.
@@ -64,7 +64,7 @@ docs/             everything; READ docs/README.md first
 - `Provider`, `ProviderInstance`, `DataKind`, `MountAdapter` interfaces — see [extension-points.md](extension-points.md).
 - Control API `/v1/*` shapes — see [daemon-spec.md](daemon-spec.md).
 - CLI command names and flags — see [cli-spec.md](cli-spec.md).
-- `.d-env.json` project file and `~/.d-env/state.db` schema.
+- `.envd.json` project file and `~/.envd/state.db` schema.
 
 ## Design constraints to remember
 
@@ -85,7 +85,7 @@ docs/             everything; READ docs/README.md first
 
 ## Useful mental models
 
-- **"Git for secrets."** Reads = checked-out working copy; PUT = unstaged edit that auto-stages; `d-env diff/commit/pull` mirror git.
+- **"Git for secrets."** Reads = checked-out working copy; PUT = unstaged edit that auto-stages; `envd diff/commit/pull` mirror git.
 - **"Adapter, not replacement."** We don't want to be a secrets manager (yet). We're the file-shaped adapter between apps that read `.env` and managed secret backends.
 
 ## Pointers

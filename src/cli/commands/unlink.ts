@@ -1,14 +1,12 @@
 import { Command } from "commander";
-import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ControlClient } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import { writeCliError } from "../error-output.js";
 import {
   ENV_FILE,
-  PROJECT_FILE,
-  parseProjectFile,
+  readProjectFile,
   removeEnvSymlink,
 } from "../project-files.js";
 
@@ -35,16 +33,13 @@ export async function unlinkProject(
   deps: UnlinkDeps,
 ): Promise<UnlinkResult> {
   const projectDir = resolve(projectPath ?? process.cwd());
-  const projectFilePath = join(projectDir, PROJECT_FILE);
   const envPath = join(projectDir, ENV_FILE);
 
-  let projectId: string | null = null;
-  if (existsSync(projectFilePath)) {
-    projectId = parseProjectFile(projectFilePath).projectId;
-  }
+  const projectFile = readProjectFile(projectDir);
+  const projectId = projectFile?.projectId ?? null;
 
   if (options.purge === true && projectId === null) {
-    throw new DEnvError("cannot purge without .d-env.json", {
+    throw new EnvdError("cannot purge without .envd.json", {
       code: "not_initialized",
       details: { path: projectDir },
     });
@@ -70,7 +65,7 @@ function printResult(result: UnlinkResult, json: boolean | undefined): void {
     return;
   }
   const suffix = result.purged ? " and purged" : "";
-  process.stdout.write(`d-env unlinked${suffix}\n`);
+  process.stdout.write(`envd unlinked${suffix}\n`);
 }
 
 export function buildUnlinkCommand(): Command {

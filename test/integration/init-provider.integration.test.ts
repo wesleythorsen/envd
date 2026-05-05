@@ -25,7 +25,7 @@ interface InitServerFixture {
 async function withInitServer(
   fn: (fixture: InitServerFixture) => Promise<void>,
 ): Promise<void> {
-  const tempDir = mkdtempSync(join(tmpdir(), "d-env-init-provider-"));
+  const tempDir = mkdtempSync(join(tmpdir(), "envd-init-provider-"));
   const projectDir = join(tempDir, "project");
   const secretsPath = join(tempDir, "secrets.json");
   mkdirSync(projectDir);

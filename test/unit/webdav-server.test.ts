@@ -36,7 +36,7 @@ function sha256Etag(bytes: string): string {
 }
 
 beforeAll(async () => {
-  tempDir = mkdtempSync(join(tmpdir(), "d-env-webdav-test-"));
+  tempDir = mkdtempSync(join(tmpdir(), "envd-webdav-test-"));
   const projectPath = join(tempDir, "project");
   const alwaysQuotedProjectPath = join(tempDir, "project-always-quoted");
   const failingProjectPath = join(tempDir, "project-failing");
@@ -301,7 +301,7 @@ describe("GET project .env", () => {
   it("maps provider fetch failures to 503", async () => {
     const res = await request(`${base}${failingProjectHref}/.env`);
     expect(res.statusCode).toBe(503);
-    expect(res.headers["x-denv-error"]).toBe("provider_unreachable");
+    expect(res.headers["x-envd-error"]).toBe("provider_unreachable");
     await res.body.dump();
   });
 
@@ -438,7 +438,11 @@ describe("404 for unknown paths", () => {
       { method: "GET", path: `${projectHref}/other.env` },
       { method: "GET", path: `/p/${project.id}.wrong/.env` },
       { method: "GET", path: `/p/unknown.${project.token}/.env` },
-      { method: "PUT", path: `/p/${project.id}.wrong/.env`, body: "IGNORED=1\n" },
+      {
+        method: "PUT",
+        path: `/p/${project.id}.wrong/.env`,
+        body: "IGNORED=1\n",
+      },
       {
         method: "PROPFIND",
         path: `/p/${project.id}.wrong/.env`,
@@ -462,7 +466,7 @@ describe("404 for unknown paths", () => {
       });
       expect(res.statusCode).toBe(404);
       expect(await res.body.text()).toBe("Not Found");
-      expect(res.headers["x-denv-error"]).toBeUndefined();
+      expect(res.headers["x-envd-error"]).toBeUndefined();
     }
   });
 });

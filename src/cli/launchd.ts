@@ -2,10 +2,17 @@ import { execFile as nodeExecFile } from "node:child_process";
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { DEnvError } from "../shared/errors.js";
+import { EnvdError } from "../shared/errors.js";
 import { logDir } from "../shared/paths.js";
+import {
+  HOME_ENV_VAR,
+  LAUNCHD_LABEL,
+  LAUNCHD_STDERR_LOG_NAME,
+  LAUNCHD_STDOUT_LOG_NAME,
+  MOUNT_PATH_ENV_VAR,
+} from "../shared/product.js";
 
-export const LAUNCHD_LABEL = "com.d-env.daemon";
+export { LAUNCHD_LABEL };
 export const LAUNCHD_PLIST_NAME = `${LAUNCHD_LABEL}.plist`;
 
 export interface RunResult {
@@ -98,7 +105,7 @@ async function defaultRunner(
 
 function assertDarwin(platform: NodeJS.Platform): void {
   if (platform !== "darwin") {
-    throw new DEnvError("launchd daemon install is only supported on macOS", {
+    throw new EnvdError("launchd daemon install is only supported on macOS", {
       code: "usage_error",
       details: { platform },
     });
@@ -129,8 +136,8 @@ function launchctlError(
   action: "load" | "unload",
   plistPath: string,
   result: RunResult,
-): DEnvError {
-  return new DEnvError(`launchctl ${action} failed`, {
+): EnvdError {
+  return new EnvdError(`launchctl ${action} failed`, {
     code: "internal",
     details: {
       plistPath,
@@ -154,17 +161,17 @@ function launchdEnvironment(
 ): readonly [string, string][] {
   const entries: [string, string][] = [];
   const path = env["PATH"];
-  const dEnvHome = env["D_ENV_HOME"];
-  const dEnvMountPath = env["D_ENV_MOUNT_PATH"];
+  const envdHome = env[HOME_ENV_VAR];
+  const envdMountPath = env[MOUNT_PATH_ENV_VAR];
 
   if (path !== undefined && path !== "") {
     entries.push(["PATH", path]);
   }
-  if (dEnvHome !== undefined && dEnvHome !== "") {
-    entries.push(["D_ENV_HOME", dEnvHome]);
+  if (envdHome !== undefined && envdHome !== "") {
+    entries.push([HOME_ENV_VAR, envdHome]);
   }
-  if (dEnvMountPath !== undefined && dEnvMountPath !== "") {
-    entries.push(["D_ENV_MOUNT_PATH", dEnvMountPath]);
+  if (envdMountPath !== undefined && envdMountPath !== "") {
+    entries.push([MOUNT_PATH_ENV_VAR, envdMountPath]);
   }
 
   return entries;
@@ -200,10 +207,10 @@ export function createLaunchdPlist(opts: {
   const escapedNodePath = escapePlistString(opts.nodePath);
   const escapedDaemonPath = escapePlistString(opts.daemonPath);
   const stdoutPath = escapePlistString(
-    join(opts.stateLogDir, "d-envd.launchd.out.log"),
+    join(opts.stateLogDir, LAUNCHD_STDOUT_LOG_NAME),
   );
   const stderrPath = escapePlistString(
-    join(opts.stateLogDir, "d-envd.launchd.err.log"),
+    join(opts.stateLogDir, LAUNCHD_STDERR_LOG_NAME),
   );
   const envBlock = environmentPlist(launchdEnvironment(opts.env));
 

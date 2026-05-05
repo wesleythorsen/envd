@@ -16,10 +16,7 @@ import { openState, type StateStore } from "../../src/core/state.js";
 import { ProjectRepo, type Project } from "../../src/core/project.js";
 import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
 import { StagingRepo } from "../../src/core/staging.js";
-import {
-  resetLogWriter,
-  setLogWriter,
-} from "../../src/shared/logger.js";
+import { resetLogWriter, setLogWriter } from "../../src/shared/logger.js";
 
 function expectSecretRedacted(logs: string, secret: string): void {
   expect(logs).not.toContain(secret);
@@ -41,9 +38,9 @@ describe("log redaction guardrails", () => {
   let logs: string[];
 
   beforeEach(async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "d-env-log-redaction-test-"));
-    process.env["D_ENV_LOG_LEVEL"] = "debug";
-    process.env["D_ENV_LOG_FORMAT"] = "json";
+    tempDir = mkdtempSync(join(tmpdir(), "envd-log-redaction-test-"));
+    process.env["ENVD_LOG_LEVEL"] = "debug";
+    process.env["ENVD_LOG_FORMAT"] = "json";
     logs = [];
     setLogWriter((line) => {
       logs.push(line);
@@ -92,8 +89,8 @@ describe("log redaction guardrails", () => {
 
   afterEach(async () => {
     resetLogWriter();
-    delete process.env["D_ENV_LOG_LEVEL"];
-    delete process.env["D_ENV_LOG_FORMAT"];
+    delete process.env["ENVD_LOG_LEVEL"];
+    delete process.env["ENVD_LOG_FORMAT"];
 
     if (controlServer !== undefined) {
       await controlServer.close();

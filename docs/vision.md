@@ -14,7 +14,7 @@ Put a **virtual `.env`** at the path the application already reads from. Behind 
 
 Mechanically: the daemon exposes files over **WebDAV** (because macOS and Linux both mount WebDAV natively, no FUSE install required). The developer's project points at that mount (via a symlink, for example). When the app opens `.env`, the OS issues a WebDAV `GET` to the daemon, which fetches secrets from the provider, renders a `.env`, and streams it back.
 
-Writes go the other way: editing the "virtual `.env`" in an editor is captured by the daemon as a **staged change**, which the developer can then review (`d-env diff`) and push (`d-env commit`) to the remote provider. This turns secrets management into a file-edit + commit workflow rather than a click-through UI or CLI-only chore.
+Writes go the other way: editing the "virtual `.env`" in an editor is captured by the daemon as a **staged change**, which the developer can then review (`envd diff`) and push (`envd commit`) to the remote provider. This turns secrets management into a file-edit + commit workflow rather than a click-through UI or CLI-only chore.
 
 ## Why this is worth building
 
@@ -26,8 +26,8 @@ Writes go the other way: editing the "virtual `.env`" in an editor is captured b
 
 ### v1 — in scope
 
-- CLI (`d-env`) with `init`, `link`, `status`, `diff`, `commit`, `pull`, `provider`, `daemon` commands.
-- Daemon (`d-envd`) exposing:
+- CLI (`envd`) with `init`, `link`, `status`, `diff`, `commit`, `pull`, `provider`, `daemon` commands.
+- Daemon (`envdd`) exposing:
   - A local WebDAV server (127.0.0.1 only).
   - A local control HTTP API for the CLI to talk to it.
 - A pluggable provider interface, with the initial implementation being a **local file-backed provider** (for tests and zero-dependency demos) and a **Doppler provider** (real-world use case).
@@ -63,7 +63,7 @@ Writes go the other way: editing the "virtual `.env`" in an editor is captured b
 
 ## Positioning
 
-Think of `d-env` as:
+Think of `envd` as:
 
 - A **thin UX layer** over whatever secrets backend you already use.
 - The missing **file-shaped adapter** for modern secret managers.

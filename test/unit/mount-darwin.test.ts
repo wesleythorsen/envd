@@ -5,7 +5,7 @@ import {
   type RunResult,
   type MkdirFn,
 } from "../../src/mount/darwin.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,19 +51,19 @@ describe("isMounted", () => {
   it("returns true when path appears in mount output", async () => {
     const mountOutput =
       "/dev/disk3s5 on /System/Volumes/Data (apfs, ...)\n" +
-      "webdavfs@http://127.0.0.1:1911/ on /Volumes/d-env (webdav, ...)\n";
+      "webdavfs@http://127.0.0.1:1911/ on /Volumes/envd (webdav, ...)\n";
 
     const adapter = new DarwinMountAdapter(makeRunner([ok(mountOutput)]));
-    expect(await adapter.isMounted("/Volumes/d-env")).toBe(true);
+    expect(await adapter.isMounted("/Volumes/envd")).toBe(true);
   });
 
   it("returns true for paths with trailing slash stripped", async () => {
     const mountOutput =
-      "webdavfs@http://127.0.0.1:1911/ on /Volumes/d-env (webdav, ...)\n";
+      "webdavfs@http://127.0.0.1:1911/ on /Volumes/envd (webdav, ...)\n";
 
     const adapter = new DarwinMountAdapter(makeRunner([ok(mountOutput)]));
     // Query with trailing slash — should still match.
-    expect(await adapter.isMounted("/Volumes/d-env/")).toBe(true);
+    expect(await adapter.isMounted("/Volumes/envd/")).toBe(true);
   });
 
   it("returns false when path is not in mount output", async () => {
@@ -72,12 +72,12 @@ describe("isMounted", () => {
       "webdavfs@http://127.0.0.1:1911/ on /Volumes/other (webdav, ...)\n";
 
     const adapter = new DarwinMountAdapter(makeRunner([ok(mountOutput)]));
-    expect(await adapter.isMounted("/Volumes/d-env")).toBe(false);
+    expect(await adapter.isMounted("/Volumes/envd")).toBe(false);
   });
 
   it("returns false on empty mount output", async () => {
     const adapter = new DarwinMountAdapter(makeRunner([ok("")]));
-    expect(await adapter.isMounted("/Volumes/d-env")).toBe(false);
+    expect(await adapter.isMounted("/Volumes/envd")).toBe(false);
   });
 });
 
@@ -88,7 +88,7 @@ describe("isMounted", () => {
 describe("mount", () => {
   it("calls mkdirFn then mount_webdav and verifies with isMounted", async () => {
     const mountOutput =
-      "webdavfs@http://127.0.0.1:1911/ on /Volumes/d-env-test (webdav, ...)\n";
+      "webdavfs@http://127.0.0.1:1911/ on /Volumes/envd-test (webdav, ...)\n";
 
     const calls: Array<{ cmd: string; args: string[] }> = [];
     const runner: Runner = (cmd, args) => {
@@ -101,10 +101,10 @@ describe("mount", () => {
     const { fn: mkdirFn, calls: mkdirCalls } = makeMkdir();
 
     const adapter = new DarwinMountAdapter(runner, mkdirFn);
-    await adapter.mount("http://127.0.0.1:1911/", "/Volumes/d-env-test");
+    await adapter.mount("http://127.0.0.1:1911/", "/Volumes/envd-test");
 
     // mkdirFn called with the mount path
-    expect(mkdirCalls).toContain("/Volumes/d-env-test");
+    expect(mkdirCalls).toContain("/Volumes/envd-test");
 
     // mount_webdav called with correct args
     const mountCall = calls.find((c) => c.cmd === "/sbin/mount_webdav");
@@ -112,13 +112,13 @@ describe("mount", () => {
     expect(mountCall?.args).toEqual([
       "-S",
       "-v",
-      "d-env",
+      "envd",
       "http://127.0.0.1:1911/",
-      "/Volumes/d-env-test",
+      "/Volumes/envd-test",
     ]);
   });
 
-  it("throws DEnvError when mount_webdav exits non-zero", async () => {
+  it("throws EnvdError when mount_webdav exits non-zero", async () => {
     const runner: Runner = (cmd) => {
       if (cmd === "/sbin/mount_webdav")
         return Promise.resolve(fail(1, "mount error"));
@@ -129,11 +129,11 @@ describe("mount", () => {
 
     const adapter = new DarwinMountAdapter(runner, mkdirFn);
     await expect(
-      adapter.mount("http://127.0.0.1:1911/", "/Volumes/d-env-test"),
+      adapter.mount("http://127.0.0.1:1911/", "/Volumes/envd-test"),
     ).rejects.toMatchObject({ code: "mount_failed" });
   });
 
-  it("throws DEnvError when mount_webdav succeeds but path is not mounted", async () => {
+  it("throws EnvdError when mount_webdav succeeds but path is not mounted", async () => {
     // mount_webdav returns 0 but isMounted check returns false (empty mount list)
     const runner: Runner = (cmd) => {
       if (cmd === "/sbin/mount_webdav") return Promise.resolve(ok());
@@ -145,7 +145,7 @@ describe("mount", () => {
 
     const adapter = new DarwinMountAdapter(runner, mkdirFn);
     await expect(
-      adapter.mount("http://127.0.0.1:1911/", "/Volumes/d-env-test"),
+      adapter.mount("http://127.0.0.1:1911/", "/Volumes/envd-test"),
     ).rejects.toMatchObject({ code: "mount_failed" });
   });
 });
@@ -163,12 +163,12 @@ describe("unmount", () => {
     };
 
     const adapter = new DarwinMountAdapter(runner);
-    await adapter.unmount("/Volumes/d-env-test");
+    await adapter.unmount("/Volumes/envd-test");
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual({
       cmd: "/sbin/umount",
-      args: ["/Volumes/d-env-test"],
+      args: ["/Volumes/envd-test"],
     });
   });
 
@@ -183,7 +183,7 @@ describe("unmount", () => {
     };
 
     const adapter = new DarwinMountAdapter(runner);
-    await adapter.unmount("/Volumes/d-env-test");
+    await adapter.unmount("/Volumes/envd-test");
 
     expect(calls).toHaveLength(2);
     expect(calls[0]?.cmd).toBe("/sbin/umount");
@@ -203,26 +203,26 @@ describe("unmount", () => {
     };
 
     const adapter = new DarwinMountAdapter(runner);
-    await adapter.unmount("/Volumes/d-env-test");
+    await adapter.unmount("/Volumes/envd-test");
     expect(callCount).toBe(2);
   });
 
-  it("throws DEnvError after retry still fails on EBUSY", async () => {
+  it("throws EnvdError after retry still fails on EBUSY", async () => {
     const runner: Runner = () => Promise.resolve(fail(16, "Resource busy"));
 
     const adapter = new DarwinMountAdapter(runner);
-    await expect(adapter.unmount("/Volumes/d-env-test")).rejects.toMatchObject({
+    await expect(adapter.unmount("/Volumes/envd-test")).rejects.toMatchObject({
       code: "mount_failed",
     });
   });
 
-  it("throws DEnvError immediately on non-EBUSY failure", async () => {
+  it("throws EnvdError immediately on non-EBUSY failure", async () => {
     const runner: Runner = () =>
       Promise.resolve(fail(1, "no such file or directory"));
 
     const adapter = new DarwinMountAdapter(runner);
-    await expect(adapter.unmount("/Volumes/d-env-test")).rejects.toBeInstanceOf(
-      DEnvError,
+    await expect(adapter.unmount("/Volumes/envd-test")).rejects.toBeInstanceOf(
+      EnvdError,
     );
   });
 });

@@ -53,15 +53,15 @@ function withTimeout<T>(
 async function main(): Promise<void> {
   const mountPath = path.join(
     "/private/tmp",
-    `d-env-smoke-${process.pid}-${randomSuffix()}`,
+    `envd-smoke-${process.pid}-${randomSuffix()}`,
   );
   const statePath = path.join(
     "/private/tmp",
-    `d-env-smoke-${process.pid}-${randomSuffix()}.db`,
+    `envd-smoke-${process.pid}-${randomSuffix()}.db`,
   );
   const projectPath = path.join(
     "/private/tmp",
-    `d-env-smoke-project-${process.pid}-${randomSuffix()}`,
+    `envd-smoke-project-${process.pid}-${randomSuffix()}`,
   );
 
   await fs.mkdir(projectPath);
@@ -114,7 +114,7 @@ async function main(): Promise<void> {
       fail("read hello/.env", err);
     }
 
-    if (!content.includes(`# d-env project ${project.id}\n`)) {
+    if (!content.includes(`# envd project ${project.id}\n`)) {
       fail(
         "assert content",
         new Error(

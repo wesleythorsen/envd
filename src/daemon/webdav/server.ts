@@ -7,7 +7,7 @@ import type { Server } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import { createLogger } from "../../shared/logger.js";
 import { safeErrorLogData } from "../../shared/log-safety.js";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import type { Project, ProjectRepo } from "../../core/project.js";
 import { createCache, type Cache, type CacheResult } from "../../core/cache.js";
 import type { StagedDesiredMap, StagingRepo } from "../../core/staging.js";
@@ -416,7 +416,7 @@ async function handlePropfind(
 
   switch (parsedPath.kind) {
     case "root":
-      body += davResponse("/", collectionProps("d-env"));
+      body += davResponse("/", collectionProps("envd"));
       if (depth >= 1) {
         body += davResponse("/p/", collectionProps("p"));
       }
@@ -705,7 +705,7 @@ function handleBadDotenv(res: ServerResponse, err: unknown): void {
   res.writeHead(400, {
     "Content-Type": "text/plain; charset=utf-8",
     "Content-Length": body.length,
-    "X-DEnv-Error": "bad_dotenv",
+    "X-Envd-Error": "bad_dotenv",
   });
   res.end(body);
 }
@@ -720,7 +720,7 @@ function handleProviderUnavailable(res: ServerResponse, err: unknown): void {
   res.writeHead(503, {
     "Content-Type": "text/plain; charset=utf-8",
     "Content-Length": body.length,
-    "X-DEnv-Error": "provider_unreachable",
+    "X-Envd-Error": "provider_unreachable",
   });
   res.end(body);
 }
@@ -735,7 +735,7 @@ function handleInternalError(res: ServerResponse, err: unknown): void {
   res.writeHead(500, {
     "Content-Type": "text/plain; charset=utf-8",
     "Content-Length": body.length,
-    "X-DEnv-Error": "internal",
+    "X-Envd-Error": "internal",
   });
   res.end(body);
 }
@@ -794,7 +794,7 @@ async function dispatch(
       try {
         await handlePut(req, res, runtime, project);
       } catch (err: unknown) {
-        if (err instanceof DEnvError && err.code === "bad_dotenv") {
+        if (err instanceof EnvdError && err.code === "bad_dotenv") {
           handleBadDotenv(res, err);
         } else {
           handleInternalError(res, err);

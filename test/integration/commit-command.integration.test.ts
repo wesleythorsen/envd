@@ -8,7 +8,11 @@ import {
   afterEach,
 } from "vitest";
 import { spawn } from "node:child_process";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import type { Server } from "node:http";
 import {
   existsSync,
@@ -119,68 +123,82 @@ describe("commit command integration", () => {
   });
 
   beforeEach(async () => {
-    tmpHome = mkdtempSync(join(tmpdir(), "d-env-commit-cli-"));
+    tmpHome = mkdtempSync(join(tmpdir(), "envd-commit-cli-"));
     projectDir = join(tmpHome, "project");
     mkdirSync(projectDir);
     writeFileSync(
-      join(projectDir, ".d-env.json"),
+      join(projectDir, ".envd.json"),
       JSON.stringify({ projectId: "project-1", version: 1 }),
     );
     writeFileSync(join(tmpHome, "control-token"), token);
     commitBodies = [];
     commitMode = "ok";
 
-    server = createServer(async (req, res) => {
-      if (req.headers["authorization"] !== `Bearer ${token}`) {
-        writeJson(res, 401, {
-          error: { code: "unauthorized", message: "Unauthorized" },
-        });
-        return;
-      }
-
-      if (req.method === "GET" && req.url === "/v1/projects/project-1/diff") {
-        writeJson(res, 200, {
-          keys: { added: ["ADDED"], modified: ["SHARED"], deleted: [] },
-        });
-        return;
-      }
-
-      if (req.method === "POST" && req.url === "/v1/projects/project-1/commit") {
-        const body = await readBody(req);
-        commitBodies.push((JSON.parse(body) as Record<string, unknown>) ?? {});
-        if (commitMode === "conflict") {
-          writeJson(res, 409, {
-            error: {
-              code: "commit_conflict",
-              message:
-                "Commit conflicts detected; retry with strategy='ours' or strategy='theirs'",
-              details: {
-                conflicts: [
-                  {
-                    key: "SHARED",
-                    base: "base",
-                    remote: "remote",
-                    desired: "local",
-                  },
-                ],
-              },
-            },
+    server = createServer((req, res) => {
+      void (async () => {
+        if (req.headers["authorization"] !== `Bearer ${token}`) {
+          writeJson(res, 401, {
+            error: { code: "unauthorized", message: "Unauthorized" },
           });
           return;
         }
 
-        writeJson(res, 200, {
-          applied: {
-            upserts: { ADDED: "fresh", SHARED: "local" },
-            deletes: [],
-          },
-          commitId: null,
-        });
-        return;
-      }
+        if (req.method === "GET" && req.url === "/v1/projects/project-1/diff") {
+          writeJson(res, 200, {
+            keys: { added: ["ADDED"], modified: ["SHARED"], deleted: [] },
+          });
+          return;
+        }
 
-      writeJson(res, 404, {
-        error: { code: "not_found", message: "Not found" },
+        if (
+          req.method === "POST" &&
+          req.url === "/v1/projects/project-1/commit"
+        ) {
+          const body = await readBody(req);
+          commitBodies.push(
+            (JSON.parse(body) as Record<string, unknown>) ?? {},
+          );
+          if (commitMode === "conflict") {
+            writeJson(res, 409, {
+              error: {
+                code: "commit_conflict",
+                message:
+                  "Commit conflicts detected; retry with strategy='ours' or strategy='theirs'",
+                details: {
+                  conflicts: [
+                    {
+                      key: "SHARED",
+                      base: "base",
+                      remote: "remote",
+                      desired: "local",
+                    },
+                  ],
+                },
+              },
+            });
+            return;
+          }
+
+          writeJson(res, 200, {
+            applied: {
+              upserts: { ADDED: "fresh", SHARED: "local" },
+              deletes: [],
+            },
+            commitId: null,
+          });
+          return;
+        }
+
+        writeJson(res, 404, {
+          error: { code: "not_found", message: "Not found" },
+        });
+      })().catch((err: unknown) => {
+        writeJson(res, 500, {
+          error: {
+            code: "internal",
+            message: err instanceof Error ? err.message : String(err),
+          },
+        });
       });
     });
 
@@ -226,7 +244,7 @@ describe("commit command integration", () => {
   it("commits through the built CLI and forwards message + default strategy", async () => {
     const result = await cliCommand(
       ["commit", projectDir, "--yes", "-m", "rotate value", "--json"],
-      { D_ENV_HOME: tmpHome },
+      { ENVD_HOME: tmpHome },
     );
 
     expect(result.status).toBe(0);
@@ -249,7 +267,7 @@ describe("commit command integration", () => {
 
     const result = await cliCommand(
       ["commit", projectDir],
-      { D_ENV_HOME: tmpHome },
+      { ENVD_HOME: tmpHome },
       "y\n",
     );
 
@@ -261,8 +279,8 @@ describe("commit command integration", () => {
     expect(result.stderr).toContain("Commit conflicts detected");
     expect(result.stderr).toContain("Conflicting keys:");
     expect(result.stderr).toContain("SHARED");
-    expect(result.stderr).toContain("d-env commit --ours");
-    expect(result.stderr).toContain("d-env commit --theirs");
+    expect(result.stderr).toContain("envd commit --ours");
+    expect(result.stderr).toContain("envd commit --theirs");
     expect(commitBodies).toEqual([{ strategy: "abort" }]);
   });
 });

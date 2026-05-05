@@ -4,20 +4,20 @@
 
 ```
 ┌────────────────────────────┐         ┌────────────────────────────────────────┐
-│ Developer's project        │         │ d-envd (long-running local daemon)     │
+│ Developer's project        │         │ envdd (long-running local daemon)     │
 │                            │         │                                        │
 │   ./src/app.ts ─ reads ─► .env  ───► │  ┌─ WebDAV server (127.0.0.1:NNNN) ─┐  │
 │                    ▲                 │  │  GET /p/<project>/.env ──┐       │  │
 │                    │ (symlink)       │  │  PUT /p/<project>/.env   │       │  │
 │                    │                 │  └──────────────────────────│───────┘  │
-│  /Volumes/d-env/…  │                 │                             ▼          │
+│  /Volumes/envd/…  │                 │                             ▼          │
 │  (OS-mounted       │                 │  ┌─ Core ──────────────────────────┐   │
 │   WebDAV share)  ──┘                 │  │  Project registry • State store │   │
 │                            │         │  │  Provider abstraction • Cache   │   │
 └────────────────────────────┘         │  │  .env render/parse • Staging    │   │
                                        │  └───────────┬─────────────────────┘   │
 ┌────────────────────────────┐         │              │                         │
-│ d-env (CLI, short-lived)   │ ──────► │  ┌─ Control HTTP API (127.0.0.1) ──┐  │
+│ envd (CLI, short-lived)   │ ──────► │  ┌─ Control HTTP API (127.0.0.1) ──┐  │
 │                            │ ◄────── │  │  /v1/projects, /v1/providers,   │  │
 │  init / status / diff /    │         │  │  /v1/diff, /v1/commit, /v1/pull │  │
 │  commit / pull / provider  │         │  └──────────────┬──────────────────┘  │
@@ -32,41 +32,41 @@
                                                (Doppler API, AWS SM, …)
 ```
 
-### 1. CLI — `d-env`
+### 1. CLI — `envd`
 
-- Short-lived Node process. Single binary entry: `bin/d-env`.
+- Short-lived Node process. Single binary entry: `bin/envd`.
 - Talks to the daemon over the **control HTTP API** for all stateful operations.
 - The CLI never speaks to providers directly. It never reads or writes the state store directly. That keeps the daemon the single source of truth.
 - Commands are defined in `src/cli/`. Parsing via `commander` (or similar). Output formatted as human-readable by default, `--json` for scripting.
 
-### 2. Daemon — `d-envd`
+### 2. Daemon — `envdd`
 
-- Long-running process, one per user session. Started on demand by the CLI (`d-env daemon start`) or on login via `launchd` (macOS) / `systemd --user` (Linux).
+- Long-running process, one per user session. Started on demand by the CLI (`envd daemon start`) or on login via `launchd` (macOS) / `systemd --user` (Linux).
 - Hosts two HTTP servers, both bound to `127.0.0.1`:
   - **WebDAV server** (default port `1911`, configurable). This is what the OS talks to when the mounted volume is accessed.
   - **Control API** (default port `1910`, configurable). This is what the CLI talks to.
 - Ports are recorded in a runtime file so the CLI can discover them.
-- Graceful shutdown: SIGTERM flushes the state store and releases the PID/port files. The mount is **not** unmounted by the daemon; the CLI has a separate `d-env unmount` for that.
+- Graceful shutdown: SIGTERM flushes the state store and releases the PID/port files. The mount is **not** unmounted by the daemon; the CLI has a separate `envd unmount` for that.
 
 ### 3. OS mount
 
-- macOS: `mount_webdav http://127.0.0.1:PORT/ ~/.d-env/mount` (built-in, no install). `/Volumes/d-env` can be used via config/override, but is not the default because creating `/Volumes/*` may require elevated permissions.
-- Linux: `mount.davfs http://127.0.0.1:PORT/ ~/.d-env/mount` via the `davfs2` package. (Out-of-tree, but packaged in common distros.)
-- The mount is established by the CLI on `d-env init` (if missing) and reused for every project afterward. The same mount hosts multiple projects under distinct paths.
+- macOS: `mount_webdav http://127.0.0.1:PORT/ ~/.envd/mount` (built-in, no install). `/Volumes/envd` can be used via config/override, but is not the default because creating `/Volumes/*` may require elevated permissions.
+- Linux: `mount.davfs http://127.0.0.1:PORT/ ~/.envd/mount` via the `davfs2` package. (Out-of-tree, but packaged in common distros.)
+- The mount is established by the CLI on `envd init` (if missing) and reused for every project afterward. The same mount hosts multiple projects under distinct paths.
 
 ### 4. Project symlink
 
-- On `d-env link` (or the first `d-env init`), the CLI creates a symlink in the project directory:
-  - `./.env -> ~/.d-env/mount/p/<project-id>/.env`
+- On `envd link` (or the first `envd init`), the CLI creates a symlink in the project directory:
+  - `./.env -> ~/.envd/mount/p/<project-id>/.env`
 - The project ID is a UUID generated at init time. The mapping `project-id -> provider/config/naming` lives in the daemon's state store.
 - **Per-project access token**: the path can optionally include a URL-safe token (e.g. `/p/<project-id>.<token>/.env`) so another local process can't enumerate `/p/` and read secrets. The symlink embeds the token; the daemon rejects requests with a wrong token. This is a v1 hardening — still only defense-in-depth, since loopback + file permissions are the main trust boundary.
 
 ### 5. State store
 
-- Per-user directory: `~/.d-env/`
+- Per-user directory: `~/.envd/`
   - `state.db` — SQLite file: projects, provider configs (references, not secrets), staged changes, last-known snapshots, timestamps.
   - `secrets.enc` — encrypted blob for provider credentials that can't live in the OS keychain (fallback only). Primary store is OS keychain / libsecret.
-  - `d-envd.pid`, `d-envd.ports` — runtime files.
+  - `envdd.pid`, `envdd.ports` — runtime files.
   - `logs/` — rotating log files.
 - SQLite is chosen over bespoke JSON so we can evolve the schema with migrations cleanly.
 
@@ -83,7 +83,7 @@ Adding AWS Secrets Manager, Vault, or our own provider later is an additive chan
 
 ### Read flow (app starts, reads `.env`)
 
-1. App opens `./.env`. Symlink resolves to `~/.d-env/mount/p/<id>.<tok>/.env`.
+1. App opens `./.env`. Symlink resolves to `~/.envd/mount/p/<id>.<tok>/.env`.
 2. macOS issues a `PROPFIND` then `GET` to the daemon's WebDAV server.
 3. Daemon authenticates the path (project id + token), loads the project record.
 4. Daemon asks the configured provider for the latest secrets. If a fresh-enough cached snapshot exists (TTL, default 60s), use that. Otherwise fetch.
@@ -99,8 +99,8 @@ Adding AWS Secrets Manager, Vault, or our own provider later is an additive chan
    - Additions, modifications, deletions all captured as **staged changes**.
 4. Staged changes are persisted in SQLite (per-project). **No push to the provider happens here.**
 5. Next read returns the merged view, so the developer sees their edit immediately.
-6. `d-env diff` prints the staged delta against the remote.
-7. `d-env commit` pushes staged changes to the provider, clears the staging, and refreshes the cache.
+6. `envd diff` prints the staged delta against the remote.
+7. `envd commit` pushes staged changes to the provider, clears the staging, and refreshes the cache.
 
 This keeps "edit in your editor" and "publish to the team" as two distinct steps — the same model as git.
 
@@ -113,7 +113,7 @@ This keeps "edit in your editor" and "publish to the team" as two distinct steps
 
 - Both HTTP servers bind **only** to `127.0.0.1`. No network exposure.
 - The WebDAV endpoint requires a token in the URL path (per-project), validated constant-time. Loopback is still the primary boundary.
-- The control API requires a token set in a local file readable only by the current user (`~/.d-env/control.token`). CLI reads this file to authenticate.
+- The control API requires a token set in a local file readable only by the current user (`~/.envd/control.token`). CLI reads this file to authenticate.
 - Provider credentials in **OS keychain** first:
   - macOS: `security`/Keychain via `keytar` or direct `security` CLI.
   - Linux: `libsecret` via `keytar`, falls back to age/scrypt-encrypted file with a user-prompted passphrase.
@@ -124,11 +124,11 @@ This keeps "edit in your editor" and "publish to the team" as two distinct steps
 
 | Thing               | Default               | Override                          |
 | ------------------- | --------------------- | --------------------------------- |
-| WebDAV port         | `1911`                | `d-env config set daemon.webdav.port` |
-| Control API port    | `1910`                | `d-env config set daemon.control.port` |
-| State dir           | `~/.d-env/`           | `$D_ENV_HOME`                     |
-| Mount point (macOS) | `~/.d-env/mount`      | `d-env config set mount.macos.path` |
-| Mount point (Linux) | `~/.d-env/mount`      | `d-env config set mount.linux.path` |
+| WebDAV port         | `1911`                | `envd config set daemon.webdav.port` |
+| Control API port    | `1910`                | `envd config set daemon.control.port` |
+| State dir           | `~/.envd/`           | `$ENVD_HOME`                     |
+| Mount point (macOS) | `~/.envd/mount`      | `envd config set mount.macos.path` |
+| Mount point (Linux) | `~/.envd/mount`      | `envd config set mount.linux.path` |
 | WebDAV path schema  | `/p/<project-id>.<tok>/.env` | fixed in v1                       |
 
 ## Why WebDAV (vs. the alternatives we rejected)

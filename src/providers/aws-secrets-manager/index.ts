@@ -7,7 +7,7 @@ import {
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 import { fromIni } from "@aws-sdk/credential-provider-ini";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import type {
   ChangeSet,
   Provider,
@@ -45,13 +45,13 @@ function validateOptionalString(
     return undefined;
   }
   if (typeof raw !== "string") {
-    throw new DEnvError(`${label} must be a string`, {
+    throw new EnvdError(`${label} must be a string`, {
       code: "usage_error",
     });
   }
   const trimmed = raw.trim();
   if (trimmed === "") {
-    throw new DEnvError(`${label} must be non-empty`, {
+    throw new EnvdError(`${label} must be non-empty`, {
       code: "usage_error",
     });
   }
@@ -60,7 +60,7 @@ function validateOptionalString(
 
 function validateConfig(config: unknown): AwsSecretsManagerConfig {
   if (!isRecord(config)) {
-    throw new DEnvError(
+    throw new EnvdError(
       "aws-secrets-manager provider config must be a JSON object",
       {
         code: "usage_error",
@@ -70,7 +70,7 @@ function validateConfig(config: unknown): AwsSecretsManagerConfig {
 
   const region = validateOptionalString(config["region"], "config.region");
   if (region === undefined) {
-    throw new DEnvError("aws-secrets-manager provider requires config.region", {
+    throw new EnvdError("aws-secrets-manager provider requires config.region", {
       code: "usage_error",
     });
   }
@@ -80,7 +80,7 @@ function validateConfig(config: unknown): AwsSecretsManagerConfig {
     "config.secretPrefix",
   );
   if (secretPrefix === undefined) {
-    throw new DEnvError(
+    throw new EnvdError(
       "aws-secrets-manager provider requires config.secretPrefix",
       {
         code: "usage_error",
@@ -96,7 +96,7 @@ function validateConfig(config: unknown): AwsSecretsManagerConfig {
     try {
       new URL(endpoint);
     } catch (err: unknown) {
-      throw new DEnvError(
+      throw new EnvdError(
         "aws-secrets-manager provider config.endpoint must be a URL",
         {
           code: "usage_error",
@@ -112,7 +112,7 @@ function validateConfig(config: unknown): AwsSecretsManagerConfig {
     deleteModeRaw !== "force" &&
     deleteModeRaw !== "recoverable"
   ) {
-    throw new DEnvError(
+    throw new EnvdError(
       'aws-secrets-manager provider config.deleteMode must be "force" or "recoverable"',
       {
         code: "usage_error",
@@ -173,8 +173,8 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function mapAwsError(err: unknown): DEnvError {
-  if (err instanceof DEnvError) {
+function mapAwsError(err: unknown): EnvdError {
+  if (err instanceof EnvdError) {
     return err;
   }
 
@@ -205,7 +205,7 @@ function mapAwsError(err: unknown): DEnvError {
     lower.includes("unauthorized") ||
     lower.includes("forbidden")
   ) {
-    return new DEnvError(
+    return new EnvdError(
       message || "aws secrets manager authentication failed",
       {
         code: "provider_auth",
@@ -236,7 +236,7 @@ function mapAwsError(err: unknown): DEnvError {
     lower.includes("unreachable") ||
     (statusCode !== undefined && statusCode >= 500)
   ) {
-    return new DEnvError(
+    return new EnvdError(
       message || "aws secrets manager provider is unreachable",
       {
         code: "provider_unreachable",
@@ -246,7 +246,7 @@ function mapAwsError(err: unknown): DEnvError {
     );
   }
 
-  return new DEnvError(message || "aws secrets manager request failed", {
+  return new EnvdError(message || "aws secrets manager request failed", {
     code: "provider_unreachable",
     details,
     cause: err,
@@ -328,7 +328,7 @@ async function fetchSecrets(
     return remote;
   } catch (err: unknown) {
     if (err instanceof TypeError) {
-      throw new DEnvError(err.message, {
+      throw new EnvdError(err.message, {
         code: "provider_unreachable",
         details: { provider: PROVIDER_NAME, secretPrefix: config.secretPrefix },
         cause: err,

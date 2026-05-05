@@ -1,15 +1,13 @@
 import { Command } from "commander";
-import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ControlClient, ProjectDetail } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import { writeCliError } from "../error-output.js";
 import {
   ENV_FILE,
-  PROJECT_FILE,
   ensureEnvSymlink,
-  parseProjectFile,
+  readProjectFile,
 } from "../project-files.js";
 
 interface LinkOptions {
@@ -34,9 +32,9 @@ async function getRegisteredProject(
   try {
     return await client.getProject(projectId);
   } catch (err: unknown) {
-    if (err instanceof DEnvError && err.code === "not_found") {
-      throw new DEnvError(
-        "this project needs to be re-initialized on this machine with 'd-env init'",
+    if (err instanceof EnvdError && err.code === "not_found") {
+      throw new EnvdError(
+        "this project needs to be re-initialized on this machine with 'envd init'",
         { code: "not_initialized" },
       );
     }
@@ -49,15 +47,14 @@ export async function linkProject(
   deps: LinkDeps,
 ): Promise<LinkResult> {
   const projectDir = resolve(projectPath ?? process.cwd());
-  const projectFilePath = join(projectDir, PROJECT_FILE);
-  if (!existsSync(projectFilePath)) {
-    throw new DEnvError("project is not initialized", {
+  const projectFile = readProjectFile(projectDir);
+  if (projectFile === null) {
+    throw new EnvdError("project is not initialized", {
       code: "not_initialized",
       details: { path: projectDir },
     });
   }
 
-  const projectFile = parseProjectFile(projectFilePath);
   const project = await getRegisteredProject(
     deps.client,
     projectFile.projectId,
@@ -77,7 +74,7 @@ function printResult(result: LinkResult, json: boolean | undefined): void {
     process.stdout.write(JSON.stringify(result) + "\n");
     return;
   }
-  process.stdout.write(`d-env linked (${result.projectId})\n`);
+  process.stdout.write(`envd linked (${result.projectId})\n`);
 }
 
 export function buildLinkCommand(): Command {

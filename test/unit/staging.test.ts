@@ -19,7 +19,7 @@ function withRepo(
   fn: (repo: StagingRepo, projectId: string, store: StateStore) => void,
   opts: StagingRepoOptions = {},
 ): void {
-  const dir = mkdtempSync(join(tmpdir(), "d-env-staging-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "envd-staging-test-"));
   const dbPath = join(dir, "state.db");
   const projectPath = join(dir, "project");
   const store = openState(dbPath);
@@ -28,7 +28,11 @@ function withRepo(
     mkdirSync(projectPath);
     const project = new ProjectRepo(store.db).create({ path: projectPath });
 
-    fn(new StagingRepo(store.db, { now: () => 1234, ...opts }), project.id, store);
+    fn(
+      new StagingRepo(store.db, { now: () => 1234, ...opts }),
+      project.id,
+      store,
+    );
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
@@ -37,9 +41,10 @@ function withRepo(
 
 function readStoredRow(store: StateStore, projectId: string): StoredRow {
   const row = store.db
-    .prepare<[string], StoredRow>(
-      "SELECT desired, desired_version FROM staging WHERE project_id = ?",
-    )
+    .prepare<
+      [string],
+      StoredRow
+    >("SELECT desired, desired_version FROM staging WHERE project_id = ?")
     .get(projectId);
   if (row === undefined) {
     throw new Error("expected staging row");

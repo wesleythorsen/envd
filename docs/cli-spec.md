@@ -1,4 +1,4 @@
-# CLI spec — `d-env`
+# CLI spec — `envd`
 
 The CLI is a thin client. Every command that mutates state calls the daemon's control API. If the daemon isn't running, commands that need it auto-start it (unless `--no-autostart` is passed).
 
@@ -7,11 +7,11 @@ The CLI is a thin client. Every command that mutates state calls the daemon's co
 - `--json` — machine-readable output. All commands must support this.
 - `--quiet` / `-q` — suppress non-error stdout.
 - `--verbose` / `-v` — extra logging to stderr.
-- `--daemon-url <url>` — override control-API URL (defaults to the one in `~/.d-env/`).
+- `--daemon-url <url>` — override control-API URL (defaults to the one in `~/.envd/`).
 
 ## Commands (v1)
 
-### `d-env init [path]`
+### `envd init [path]`
 
 Initialize a project in the current (or given) directory.
 
@@ -22,19 +22,19 @@ Initialize a project in the current (or given) directory.
 - Starts the daemon and mount if missing.
 - Registers the project with the daemon, gets back a `project-id` and token.
 - Creates `./.env -> <mount>/p/<id>.<tok>/.env` symlink.
-- Writes a `.d-env.json` (or adds a `d-env` key to `package.json`) at the project root recording project-id, provider name, and format options. Values are **not** stored here.
+- Writes a `.envd.json` (or adds a `envd` key to `package.json`) at the project root recording project-id, provider name, and format options. Values are **not** stored here.
 - Adds `.env` to `.gitignore` if missing (safe default).
 - Idempotent: re-running in an already-initialized project is a no-op with a short summary.
 
-### `d-env link [path]`
+### `envd link [path]`
 
-Re-create the symlink for an already-registered project (e.g. after a fresh clone where `.d-env.json` exists but the symlink doesn't). Does not re-prompt for provider config.
+Re-create the symlink for an already-registered project (e.g. after a fresh clone where `.envd.json` exists but the symlink doesn't). Does not re-prompt for provider config.
 
-### `d-env unlink [path]`
+### `envd unlink [path]`
 
 Remove the project's symlink. Optionally `--purge` to also remove the project from the daemon's registry and drop staging.
 
-### `d-env status`
+### `envd status`
 
 Print the current project's state:
 - Project id, provider, format.
@@ -42,51 +42,51 @@ Print the current project's state:
 - Staged changes summary (count of adds/mods/dels).
 - Daemon health (running? version? ports?).
 
-### `d-env diff`
+### `envd diff`
 
 Show staged vs. remote diff in a `git diff`-like format, with keys only by default. `--values` reveals secret values inline. `--json` for structured output.
 
-### `d-env commit [-m <message>]`
+### `envd commit [-m <message>]`
 
 Push staged changes to the provider.
 - Re-fetches provider state first to detect upstream drift.
 - Aborts with a clear diff on conflict; offers `--theirs` / `--ours` / `--interactive`.
 - On success: clears staging, refreshes cache, prints summary.
 
-### `d-env pull`
+### `envd pull`
 
 Drop local staging and refresh the provider snapshot.
 - With non-empty staging, requires `--force`.
 - `--dry-run` shows what would change.
 
-### `d-env provider <subcommand>`
+### `envd provider <subcommand>`
 
-- `d-env provider list` — providers registered with the daemon and their configured instances.
-- `d-env provider add <name>` — add a provider instance (prompts for creds, stores in keychain).
-- `d-env provider remove <id>` — remove an instance; refuses if any project uses it.
-- `d-env provider test <id>` — hit the provider to confirm credentials work.
+- `envd provider list` — providers registered with the daemon and their configured instances.
+- `envd provider add <name>` — add a provider instance (prompts for creds, stores in keychain).
+- `envd provider remove <id>` — remove an instance; refuses if any project uses it.
+- `envd provider test <id>` — hit the provider to confirm credentials work.
 
-### `d-env daemon <subcommand>`
+### `envd daemon <subcommand>`
 
-- `d-env daemon status` — PID, uptime, ports, loaded projects.
-- `d-env daemon start` — start if not running.
-- `d-env daemon stop` — graceful shutdown.
-- `d-env daemon restart` — stop + start.
-- `d-env daemon logs [--tail -f]` — stream logs.
-- `d-env daemon install` — install as launchd / systemd-user unit so it starts on login.
-- `d-env daemon uninstall` — remove the unit.
+- `envd daemon status` — PID, uptime, ports, loaded projects.
+- `envd daemon start` — start if not running.
+- `envd daemon stop` — graceful shutdown.
+- `envd daemon restart` — stop + start.
+- `envd daemon logs [--tail -f]` — stream logs.
+- `envd daemon install` — install as launchd / systemd-user unit so it starts on login.
+- `envd daemon uninstall` — remove the unit.
 
-### `d-env mount <subcommand>`
+### `envd mount <subcommand>`
 
-- `d-env mount status` — is the WebDAV volume mounted where we expect?
-- `d-env mount remount` — unmount + mount.
-- `d-env mount unmount` — unmount.
+- `envd mount status` — is the WebDAV volume mounted where we expect?
+- `envd mount remount` — unmount + mount.
+- `envd mount unmount` — unmount.
 
-### `d-env config <get|set|list> [key] [value]`
+### `envd config <get|set|list> [key] [value]`
 
-Read/write user-level config in `~/.d-env/config.json`. Ports, mount paths, defaults.
+Read/write user-level config in `~/.envd/config.json`. Ports, mount paths, defaults.
 
-### `d-env version`
+### `envd version`
 
 Print CLI version, daemon version (if reachable), protocol version.
 
@@ -112,6 +112,6 @@ Print CLI version, daemon version (if reachable), protocol version.
 ## UX principles
 
 - **Never silently swallow a provider error on read.** If the `.env` can't be rendered, the WebDAV `GET` returns 503 with a header; the CLI surfaces that clearly when asked for status.
-- **No implicit commits.** Edits are always staged; nothing is pushed without `d-env commit`.
+- **No implicit commits.** Edits are always staged; nothing is pushed without `envd commit`.
 - **Safe by default.** Destructive commands (`pull` with staging, `unlink --purge`, `provider remove`) always require a confirmation or `--force`.
-- **Discoverable.** `d-env help <cmd>` prints command-specific docs pulled from the same source used to build the online docs.
+- **Discoverable.** `envd help <cmd>` prints command-specific docs pulled from the same source used to build the online docs.

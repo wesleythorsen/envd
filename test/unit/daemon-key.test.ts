@@ -7,7 +7,7 @@ function fakeKeychain(
 ): KeychainAdapter & { readonly store: Map<string, string> } {
   const store = new Map<string, string>();
   if (initial !== null) {
-    store.set("d-env-daemon\0staging-encryption-key", initial);
+    store.set("envd-daemon\0staging-encryption-key", initial);
   }
 
   return {
@@ -34,9 +34,9 @@ describe("loadOrCreateDaemonKey", () => {
     });
 
     expect(key).toEqual(Buffer.alloc(32, 7));
-    expect(
-      keychain.store.get("d-env-daemon\0staging-encryption-key"),
-    ).toBe(Buffer.alloc(32, 7).toString("base64"));
+    expect(keychain.store.get("envd-daemon\0staging-encryption-key")).toBe(
+      Buffer.alloc(32, 7).toString("base64"),
+    );
   });
 
   it("loads an existing stored key", async () => {

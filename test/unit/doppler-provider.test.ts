@@ -4,7 +4,7 @@ import { setupServer } from "msw/node";
 import dopplerProvider from "../../src/providers/doppler/index.js";
 import { createLogger } from "../../src/shared/logger.js";
 import type { ProviderContext } from "../../src/providers/base.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 
 const apiHost = "https://doppler.test";
 const meUrl = `${apiHost}/v3/me`;
@@ -39,12 +39,12 @@ async function createInstance() {
   });
 }
 
-async function expectDEnvError(promise: Promise<unknown>): Promise<DEnvError> {
+async function expectEnvdError(promise: Promise<unknown>): Promise<EnvdError> {
   try {
     await promise;
   } catch (err: unknown) {
-    expect(err).toBeInstanceOf(DEnvError);
-    return err as DEnvError;
+    expect(err).toBeInstanceOf(EnvdError);
+    return err as EnvdError;
   }
   throw new Error("expected promise to reject");
 }
@@ -216,7 +216,7 @@ describe("doppler provider", () => {
     server.use(http.get(downloadUrl, () => HttpResponse.json({}, { status })));
 
     const provider = await createInstance();
-    const err = await expectDEnvError(provider.fetch());
+    const err = await expectEnvdError(provider.fetch());
 
     expect(err.code).toBe("provider_auth");
     expect(err.details).toEqual({ provider: "doppler", statusCode: status });
@@ -233,7 +233,7 @@ describe("doppler provider", () => {
     );
 
     const provider = await createInstance();
-    const err = await expectDEnvError(provider.fetch());
+    const err = await expectEnvdError(provider.fetch());
 
     expect(err.code).toBe("provider_unreachable");
     expect(err.details).toEqual({
@@ -249,7 +249,7 @@ describe("doppler provider", () => {
     );
 
     const provider = await createInstance();
-    const err = await expectDEnvError(provider.fetch());
+    const err = await expectEnvdError(provider.fetch());
 
     expect(err.code).toBe("provider_unreachable");
     expect(err.details).toEqual({ provider: "doppler", statusCode: 503 });
@@ -265,7 +265,7 @@ describe("doppler provider", () => {
     );
 
     const provider = await createInstance();
-    const err = await expectDEnvError(provider.fetch());
+    const err = await expectEnvdError(provider.fetch());
 
     expect(err.code).toBe("provider_unreachable");
     expect(err.cause).toBeInstanceOf(SyntaxError);
@@ -274,6 +274,6 @@ describe("doppler provider", () => {
   it("validates config shape", async () => {
     await expect(
       dopplerProvider.create(makeContext(), { project: "web" }),
-    ).rejects.toBeInstanceOf(DEnvError);
+    ).rejects.toBeInstanceOf(EnvdError);
   });
 });

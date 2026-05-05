@@ -12,7 +12,7 @@ import type {
   ProviderInstanceDetail,
   ProviderMetadata,
 } from "../../src/ipc/control-client.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 
 const localFileMetadata: ProviderMetadata = {
   name: "local-file",
@@ -234,7 +234,7 @@ describe("provider command helpers", () => {
         },
       ),
     ).rejects.toSatisfy((error: unknown) => {
-      return error instanceof DEnvError && error.code === "usage_error";
+      return error instanceof EnvdError && error.code === "usage_error";
     });
   });
 

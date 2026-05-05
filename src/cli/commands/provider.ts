@@ -10,7 +10,7 @@ import type {
 } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
 import type { JSONSchema } from "../../providers/base.js";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import { writeCliError } from "../error-output.js";
 
 interface Writable {
@@ -91,7 +91,7 @@ function schemaObject(schema: JSONSchema, label: string): SchemaObject {
     return {};
   }
   if (schema === false) {
-    throw new DEnvError(`${label} schema does not allow values`, {
+    throw new EnvdError(`${label} schema does not allow values`, {
       code: "usage_error",
     });
   }
@@ -120,14 +120,14 @@ function parseJsonObject(raw: string, label: string): Record<string, unknown> {
   try {
     parsed = JSON.parse(raw) as unknown;
   } catch (parseErr: unknown) {
-    throw new DEnvError(`${label} must be valid JSON`, {
+    throw new EnvdError(`${label} must be valid JSON`, {
       code: "usage_error",
       cause: parseErr,
     });
   }
 
   if (!isRecord(parsed)) {
-    throw new DEnvError(`${label} must be a JSON object`, {
+    throw new EnvdError(`${label} must be a JSON object`, {
       code: "usage_error",
     });
   }
@@ -139,7 +139,7 @@ function parseCredentialsJson(raw: string): Record<string, string> {
   const credentials: Record<string, string> = {};
   for (const [key, value] of Object.entries(parsed)) {
     if (typeof value !== "string") {
-      throw new DEnvError("--credentials-json values must be strings", {
+      throw new EnvdError("--credentials-json values must be strings", {
         code: "usage_error",
         details: { key },
       });
@@ -195,7 +195,7 @@ function defaultPromptSecret(question: string): Promise<string> {
 
     const cancel = (): void => {
       cleanup();
-      reject(new DEnvError("prompt cancelled", { code: "usage_error" }));
+      reject(new EnvdError("prompt cancelled", { code: "usage_error" }));
     };
 
     const onData = (chunk: Buffer | string): void => {
@@ -325,7 +325,7 @@ async function promptConfigValue(
         if (typeof object.default === "string") {
           return object.default;
         }
-        throw new DEnvError(`default for ${key} must be a string`, {
+        throw new EnvdError(`default for ${key} must be a string`, {
           code: "usage_error",
           details: { key },
         });
@@ -364,7 +364,7 @@ async function promptConfigValue(
     }
   }
 
-  throw new DEnvError(`unsupported config field type for ${key}`, {
+  throw new EnvdError(`unsupported config field type for ${key}`, {
     code: "usage_error",
     details: { key, type },
   });
@@ -376,7 +376,7 @@ async function promptConfig(
 ): Promise<Record<string, unknown>> {
   const schema = schemaObject(metadata.instanceConfigSchema, "config");
   if (schemaType(schema) !== undefined && schemaType(schema) !== "object") {
-    throw new DEnvError("provider config schema must be an object", {
+    throw new EnvdError("provider config schema must be an object", {
       code: "usage_error",
       details: { provider: metadata.name },
     });
@@ -433,7 +433,7 @@ async function providerMetadata(
   const providers = await client.listProviders();
   const metadata = providers.find((provider) => provider.name === providerName);
   if (metadata === undefined) {
-    throw new DEnvError("provider is not registered", {
+    throw new EnvdError("provider is not registered", {
       code: "usage_error",
       details: { provider: providerName },
     });
@@ -467,7 +467,7 @@ export async function addProviderInstance(
       ? await promptWithDefault(prompt, "Instance name", providerName)
       : providerName);
   if (name.trim() === "") {
-    throw new DEnvError("provider instance name must be non-empty", {
+    throw new EnvdError("provider instance name must be non-empty", {
       code: "usage_error",
     });
   }
@@ -501,7 +501,7 @@ export async function removeProviderInstance(
   if (options.force !== true) {
     const shouldRemove = await confirm(`Remove provider instance ${id}?`);
     if (!shouldRemove) {
-      throw new DEnvError("provider instance removal cancelled", {
+      throw new EnvdError("provider instance removal cancelled", {
         code: "usage_error",
       });
     }

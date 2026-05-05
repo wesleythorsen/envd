@@ -62,13 +62,13 @@ function makeRemove(): {
 }
 
 describe("LinuxMountAdapter", () => {
-  const configDir = `${tmpdir()}/d-env-davfs2-fixture`;
+  const configDir = `${tmpdir()}/envd-davfs2-fixture`;
   const configPath = `${configDir}/davfs2.conf`;
 
   it("detects an active mount point from linux mount output", async () => {
     const mountOutput =
       "tmpfs on /run type tmpfs (rw,nosuid,nodev)\n" +
-      "http://127.0.0.1:1911/ on /home/user/.d-env/mount type fuse.davfs (rw,nodev)\n";
+      "http://127.0.0.1:1911/ on /home/user/.envd/mount type fuse.davfs (rw,nodev)\n";
     const runner: Runner = (cmd) => {
       if (cmd === "mount") {
         return Promise.resolve(ok(mountOutput));
@@ -77,7 +77,7 @@ describe("LinuxMountAdapter", () => {
     };
 
     const adapter = new LinuxMountAdapter(runner);
-    expect(await adapter.isMounted("/home/user/.d-env/mount/")).toBe(true);
+    expect(await adapter.isMounted("/home/user/.envd/mount/")).toBe(true);
   });
 
   it("mounts with a temporary davfs2 config that disables locks", async () => {
@@ -87,7 +87,7 @@ describe("LinuxMountAdapter", () => {
       if (cmd === "mount") {
         return Promise.resolve(
           ok(
-            "http://127.0.0.1:1911/ on /tmp/d-env-mount type fuse.davfs (rw,nodev)\n",
+            "http://127.0.0.1:1911/ on /tmp/envd-mount type fuse.davfs (rw,nodev)\n",
           ),
         );
       }
@@ -103,9 +103,9 @@ describe("LinuxMountAdapter", () => {
       mkdtempFn,
       writeFileFn,
     );
-    await adapter.mount("http://127.0.0.1:1911/", "/tmp/d-env-mount");
+    await adapter.mount("http://127.0.0.1:1911/", "/tmp/envd-mount");
 
-    expect(mkdirCalls).toEqual(["/tmp/d-env-mount"]);
+    expect(mkdirCalls).toEqual(["/tmp/envd-mount"]);
     expect(writeCalls).toEqual([
       {
         path: configPath,
@@ -120,7 +120,7 @@ describe("LinuxMountAdapter", () => {
           "-o",
           `conf=${configPath}`,
           "http://127.0.0.1:1911/",
-          "/tmp/d-env-mount",
+          "/tmp/envd-mount",
         ],
       },
       { cmd: "mount", args: [] },
@@ -128,11 +128,12 @@ describe("LinuxMountAdapter", () => {
   });
 
   it("throws a mount_failed error with an install hint when davfs2 is missing", async () => {
-    const runner: Runner = () => Promise.resolve(fail(127, "mount.davfs: not found"));
+    const runner: Runner = () =>
+      Promise.resolve(fail(127, "mount.davfs: not found"));
     const adapter = new LinuxMountAdapter(runner);
 
     await expect(
-      adapter.mount("http://127.0.0.1:1911/", "/tmp/d-env-mount"),
+      adapter.mount("http://127.0.0.1:1911/", "/tmp/envd-mount"),
     ).rejects.toMatchObject({
       code: "mount_failed",
       message:
@@ -147,7 +148,7 @@ describe("LinuxMountAdapter", () => {
         return Promise.resolve(
           ok(
             mounted
-              ? "http://127.0.0.1:1911/ on /tmp/d-env-mount type fuse.davfs (rw,nodev)\n"
+              ? "http://127.0.0.1:1911/ on /tmp/envd-mount type fuse.davfs (rw,nodev)\n"
               : "",
           ),
         );
@@ -173,8 +174,8 @@ describe("LinuxMountAdapter", () => {
       writeFileFn,
       removeFn,
     );
-    await adapter.mount("http://127.0.0.1:1911/", "/tmp/d-env-mount");
-    await adapter.unmount("/tmp/d-env-mount");
+    await adapter.mount("http://127.0.0.1:1911/", "/tmp/envd-mount");
+    await adapter.unmount("/tmp/envd-mount");
 
     expect(removeCalls).toEqual([configDir]);
   });

@@ -134,21 +134,21 @@ describe("GET /v1/logs", () => {
   let tempHome: string;
 
   beforeEach(() => {
-    tempHome = mkdtempSync(join(tmpdir(), "d-env-control-logs-"));
-    process.env["D_ENV_HOME"] = tempHome;
-    process.env["D_ENV_LOG_FORMAT"] = "json";
+    tempHome = mkdtempSync(join(tmpdir(), "envd-control-logs-"));
+    process.env["ENVD_HOME"] = tempHome;
+    process.env["ENVD_LOG_FORMAT"] = "json";
   });
 
   afterEach(() => {
-    delete process.env["D_ENV_HOME"];
-    delete process.env["D_ENV_LOG_FORMAT"];
+    delete process.env["ENVD_HOME"];
+    delete process.env["ENVD_LOG_FORMAT"];
     rmSync(tempHome, { recursive: true, force: true });
   });
 
   it("returns the requested tail lines from the daemon log file", async () => {
     mkdirSync(join(tempHome, "logs"), { recursive: true });
     writeFileSync(
-      join(tempHome, "logs", "d-envd.log"),
+      join(tempHome, "logs", "envdd.log"),
       "alpha\nbravo\ncharlie\n",
     );
 
@@ -163,7 +163,7 @@ describe("GET /v1/logs", () => {
 
   it("streams existing tail lines and new log events over SSE", async () => {
     mkdirSync(join(tempHome, "logs"), { recursive: true });
-    writeFileSync(join(tempHome, "logs", "d-envd.log"), '{"msg":"seed"}\n');
+    writeFileSync(join(tempHome, "logs", "envdd.log"), '{"msg":"seed"}\n');
 
     const res = await fetch(`${base}/v1/logs?tail=1&follow=true`, {
       headers: { Authorization: `Bearer ${TOKEN}` },
@@ -252,7 +252,7 @@ describe("/v1/projects", () => {
   let projectPath: string;
 
   beforeAll(async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "d-env-control-projects-"));
+    tempDir = mkdtempSync(join(tmpdir(), "envd-control-projects-"));
     projectPath = join(tempDir, "project");
     mkdirSync(projectPath);
 
@@ -364,7 +364,7 @@ describe("GET /v1/projects/:id/diff", () => {
   let cleanProjectId: string;
 
   beforeAll(async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "d-env-control-diff-"));
+    tempDir = mkdtempSync(join(tmpdir(), "envd-control-diff-"));
     const providerFile = join(tempDir, "secrets.json");
     const projectPath = join(tempDir, "project");
     const cleanProjectPath = join(tempDir, "clean-project");
@@ -508,7 +508,7 @@ describe("POST /v1/projects/:id/pull", () => {
   };
 
   beforeAll(async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "d-env-control-pull-"));
+    tempDir = mkdtempSync(join(tmpdir(), "envd-control-pull-"));
     providerFile = join(tempDir, "secrets.json");
     const conflictProjectPath = join(tempDir, "conflict-project");
     const forceProjectPath = join(tempDir, "force-project");
@@ -704,7 +704,7 @@ describe("POST /v1/projects/:id/commit", () => {
   beforeAll(async () => {
     mutableProviders.push(commitProvider);
 
-    tempDir = mkdtempSync(join(tmpdir(), "d-env-control-commit-"));
+    tempDir = mkdtempSync(join(tmpdir(), "envd-control-commit-"));
     const projectPath = join(tempDir, "commit-project");
     mkdirSync(projectPath);
 
@@ -970,7 +970,7 @@ describe("/v1/providers and /v1/provider-instances", () => {
   let projectPath: string;
 
   beforeAll(async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "d-env-control-providers-"));
+    tempDir = mkdtempSync(join(tmpdir(), "envd-control-providers-"));
     providerFile = join(tempDir, "secrets.json");
     projectPath = join(tempDir, "project");
     mkdirSync(projectPath);

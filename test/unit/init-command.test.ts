@@ -19,7 +19,7 @@ import type {
   ProviderMetadata,
   ProjectDetail,
 } from "../../src/ipc/control-client.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 
 const localFileMetadata: ProviderMetadata = {
   name: "local-file",
@@ -143,7 +143,7 @@ class FakeControlClient implements ControlClient {
     );
     if (instance === undefined) {
       return Promise.reject(
-        new DEnvError("provider instance not found", { code: "not_found" }),
+        new EnvdError("provider instance not found", { code: "not_found" }),
       );
     }
     return Promise.resolve(instance);
@@ -165,7 +165,7 @@ class FakeControlClient implements ControlClient {
 function withTempProject(
   fn: (projectDir: string) => Promise<void>,
 ): Promise<void> {
-  const dir = mkdtempSync(join(tmpdir(), "d-env-init-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "envd-init-test-"));
   const projectDir = join(dir, "project");
   mkdirSync(projectDir);
   return fn(projectDir).finally(() => {
@@ -181,7 +181,7 @@ describe("initProject", () => {
   it("registers a project, writes metadata, creates symlink, and updates gitignore", async () => {
     await withTempProject(async (projectDir) => {
       const client = new FakeControlClient(
-        "/Volumes/d-env/p/project-1.token-1/.env",
+        "/Volumes/envd/p/project-1.token-1/.env",
       );
 
       const result: InitResult = await initProject(
@@ -197,12 +197,12 @@ describe("initProject", () => {
         path: projectDir,
         providerInstanceId: "instance-1",
       });
-      expect(readJson(join(projectDir, ".d-env.json"))).toEqual({
+      expect(readJson(join(projectDir, ".envd.json"))).toEqual({
         projectId: "project-1",
         version: 1,
       });
       expect(readlinkSync(join(projectDir, ".env"))).toBe(
-        "/Volumes/d-env/p/project-1.token-1/.env",
+        "/Volumes/envd/p/project-1.token-1/.env",
       );
       expect(readFileSync(join(projectDir, ".gitignore"), "utf-8")).toBe(
         ".env\n",
@@ -213,7 +213,7 @@ describe("initProject", () => {
   it("is idempotent and recreates a missing symlink", async () => {
     await withTempProject(async (projectDir) => {
       const client = new FakeControlClient(
-        "/Volumes/d-env/p/project-1.token-1/.env",
+        "/Volumes/envd/p/project-1.token-1/.env",
       );
       await initProject(
         projectDir,
@@ -231,15 +231,15 @@ describe("initProject", () => {
       expect(result.status).toBe("already_initialized");
       expect(client.createProjectCalls).toBe(1);
       expect(readlinkSync(join(projectDir, ".env"))).toBe(
-        "/Volumes/d-env/p/project-1.token-1/.env",
+        "/Volumes/envd/p/project-1.token-1/.env",
       );
     });
   });
 
-  it("does not store the project token in .d-env.json", async () => {
+  it("does not store the project token in .envd.json", async () => {
     await withTempProject(async (projectDir) => {
       const client = new FakeControlClient(
-        "/Volumes/d-env/p/project-1.token-1/.env",
+        "/Volumes/envd/p/project-1.token-1/.env",
       );
 
       await initProject(
@@ -248,10 +248,7 @@ describe("initProject", () => {
         { client, ensureMount: false },
       );
 
-      const projectFile = readFileSync(
-        join(projectDir, ".d-env.json"),
-        "utf-8",
-      );
+      const projectFile = readFileSync(join(projectDir, ".envd.json"), "utf-8");
       expect(projectFile).not.toContain("token-1");
     });
   });
@@ -259,7 +256,7 @@ describe("initProject", () => {
   it("prompts for an existing provider instance and posts the chosen id", async () => {
     await withTempProject(async (projectDir) => {
       const client = new FakeControlClient(
-        "/Volumes/d-env/p/project-1.token-1/.env",
+        "/Volumes/envd/p/project-1.token-1/.env",
         {
           providerInstances: [
             {
@@ -301,7 +298,7 @@ describe("initProject", () => {
   it("creates a provider instance through provider-add prompts when none exist", async () => {
     await withTempProject(async (projectDir) => {
       const client = new FakeControlClient(
-        "/Volumes/d-env/p/project-1.token-1/.env",
+        "/Volumes/envd/p/project-1.token-1/.env",
       );
       const answers = ["", "/tmp/secrets.json"];
 
@@ -331,7 +328,7 @@ describe("initProject", () => {
   it("creates a provider instance non-interactively from provider flags", async () => {
     await withTempProject(async (projectDir) => {
       const client = new FakeControlClient(
-        "/Volumes/d-env/p/project-1.token-1/.env",
+        "/Volumes/envd/p/project-1.token-1/.env",
       );
 
       await initProject(
@@ -366,7 +363,7 @@ describe("initProject", () => {
   it("defaults the provider instance name for provider-driven scripting", async () => {
     await withTempProject(async (projectDir) => {
       const client = new FakeControlClient(
-        "/Volumes/d-env/p/project-1.token-1/.env",
+        "/Volumes/envd/p/project-1.token-1/.env",
       );
 
       await initProject(

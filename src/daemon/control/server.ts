@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import { readLogTail } from "../../shared/log-file.js";
 import { createLogger, subscribeLogLines } from "../../shared/logger.js";
 import { safeErrorLogData } from "../../shared/log-safety.js";
-import { DEnvError, type ErrorCode } from "../../shared/errors.js";
+import { EnvdError, type ErrorCode } from "../../shared/errors.js";
 import type { ProjectRepo } from "../../core/project.js";
 import { createCache, type Cache, type CacheResult } from "../../core/cache.js";
 import type { StagedDesiredMap, StagingRepo } from "../../core/staging.js";
@@ -58,7 +58,7 @@ export interface ControlServerOpts {
   port?: number;
   /**
    * Auth token. When provided, filesystem bootstrap is skipped — used by
-   * tests to supply the token directly without touching ~/.d-env/.
+   * tests to supply the token directly without touching ~/.envd/.
    */
   token: string;
   /**
@@ -143,7 +143,7 @@ function statusForErrorCode(code: ErrorCode): number {
 }
 
 function writeErrorFromUnknown(res: ServerResponse, err: unknown): void {
-  if (err instanceof DEnvError) {
+  if (err instanceof EnvdError) {
     writeJsonError(
       res,
       statusForErrorCode(err.code),
@@ -229,12 +229,10 @@ function parseLogsRequest(req: IncomingMessage): {
   const tailRaw = url.searchParams.get("tail");
   const followRaw = url.searchParams.get("follow");
   const tail =
-    tailRaw === null || tailRaw === ""
-      ? 100
-      : Number.parseInt(tailRaw, 10);
+    tailRaw === null || tailRaw === "" ? 100 : Number.parseInt(tailRaw, 10);
 
   if (!Number.isInteger(tail) || tail < 0) {
-    throw new DEnvError("tail must be a non-negative integer", {
+    throw new EnvdError("tail must be a non-negative integer", {
       code: "usage_error",
     });
   }
@@ -294,7 +292,7 @@ function handleShutdown(res: ServerResponse, onShutdown?: () => void): void {
 
 function requireProjectRepo(projectRepo: ProjectRepo | undefined): ProjectRepo {
   if (projectRepo === undefined) {
-    throw new DEnvError("project registry is not available", {
+    throw new EnvdError("project registry is not available", {
       code: "internal",
     });
   }
@@ -305,7 +303,7 @@ function requireProviderInstanceRepo(
   providerInstanceRepo: ProviderInstanceRepo | undefined,
 ): ProviderInstanceRepo {
   if (providerInstanceRepo === undefined) {
-    throw new DEnvError("provider instance registry is not available", {
+    throw new EnvdError("provider instance registry is not available", {
       code: "internal",
     });
   }
@@ -314,7 +312,7 @@ function requireProviderInstanceRepo(
 
 function requireStagingRepo(stagingRepo: StagingRepo | undefined): StagingRepo {
   if (stagingRepo === undefined) {
-    throw new DEnvError("staging registry is not available", {
+    throw new EnvdError("staging registry is not available", {
       code: "internal",
     });
   }
@@ -325,7 +323,7 @@ function requireKeychain(
   keychain: KeychainAdapter | undefined,
 ): KeychainAdapter {
   if (keychain === undefined) {
-    throw new DEnvError("keychain adapter is not available", {
+    throw new EnvdError("keychain adapter is not available", {
       code: "internal",
     });
   }
@@ -343,14 +341,14 @@ function parseProjectCreateBody(body: unknown): {
   formatConfig?: string;
 } {
   if (body === null || typeof body !== "object" || !("path" in body)) {
-    throw new DEnvError("request body must include path", {
+    throw new EnvdError("request body must include path", {
       code: "usage_error",
     });
   }
 
   const path = (body as { path?: unknown }).path;
   if (typeof path !== "string" || path === "") {
-    throw new DEnvError("path must be a non-empty string", {
+    throw new EnvdError("path must be a non-empty string", {
       code: "usage_error",
     });
   }
@@ -365,7 +363,7 @@ function parseProjectCreateBody(body: unknown): {
     .providerInstanceId;
   if (providerInstanceId !== undefined) {
     if (typeof providerInstanceId !== "string" || providerInstanceId === "") {
-      throw new DEnvError("providerInstanceId must be a non-empty string", {
+      throw new EnvdError("providerInstanceId must be a non-empty string", {
         code: "usage_error",
       });
     }
@@ -375,7 +373,7 @@ function parseProjectCreateBody(body: unknown): {
   const format = (body as { format?: unknown }).format;
   if (format !== undefined) {
     if (typeof format !== "string" || format === "") {
-      throw new DEnvError("format must be a non-empty string", {
+      throw new EnvdError("format must be a non-empty string", {
         code: "usage_error",
       });
     }
@@ -385,7 +383,7 @@ function parseProjectCreateBody(body: unknown): {
   const formatConfig = (body as { formatConfig?: unknown }).formatConfig;
   if (formatConfig !== undefined) {
     if (typeof formatConfig !== "string" || formatConfig === "") {
-      throw new DEnvError("formatConfig must be a non-empty string", {
+      throw new EnvdError("formatConfig must be a non-empty string", {
         code: "usage_error",
       });
     }
@@ -470,7 +468,7 @@ async function fetchProjectSecrets(
   keychain: KeychainAdapter | undefined,
 ): Promise<SecretMap> {
   if (providerInstanceId === null) {
-    throw new DEnvError("project has no provider instance", {
+    throw new EnvdError("project has no provider instance", {
       code: "usage_error",
       details: { projectId },
     });
@@ -480,7 +478,7 @@ async function fetchProjectSecrets(
   const keychainAdapter = requireKeychain(keychain);
   const record = repo.get(providerInstanceId);
   if (record === undefined) {
-    throw new DEnvError("provider instance not found", {
+    throw new EnvdError("provider instance not found", {
       code: "provider_unreachable",
       details: { providerInstanceId },
     });
@@ -488,7 +486,7 @@ async function fetchProjectSecrets(
 
   const provider = findProvider(record.provider);
   if (provider === undefined) {
-    throw new DEnvError("provider is not registered", {
+    throw new EnvdError("provider is not registered", {
       code: "usage_error",
       details: { provider: record.provider },
     });
@@ -507,10 +505,10 @@ async function fetchProjectSecrets(
       }
     }
   } catch (err: unknown) {
-    if (err instanceof DEnvError) {
+    if (err instanceof EnvdError) {
       throw err;
     }
-    throw new DEnvError("provider is unreachable", {
+    throw new EnvdError("provider is unreachable", {
       code: "provider_unreachable",
       cause: err,
     });
@@ -528,7 +526,7 @@ function readCacheTtlMs(config: unknown): number {
   }
 
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
-    throw new DEnvError(
+    throw new EnvdError(
       "provider instance cache TTL must be a non-negative number",
       {
         code: "internal",
@@ -547,7 +545,7 @@ async function readProjectSecrets(
   cache: Cache<SecretMap>,
 ): Promise<CacheResult<SecretMap>> {
   if (providerInstanceId === null) {
-    throw new DEnvError("project has no provider instance", {
+    throw new EnvdError("project has no provider instance", {
       code: "usage_error",
       details: { projectId },
     });
@@ -556,7 +554,7 @@ async function readProjectSecrets(
   const repo = requireProviderInstanceRepo(providerInstanceRepo);
   const record = repo.get(providerInstanceId);
   if (record === undefined) {
-    throw new DEnvError("provider instance not found", {
+    throw new EnvdError("provider instance not found", {
       code: "provider_unreachable",
       details: { providerInstanceId },
     });
@@ -584,7 +582,7 @@ async function refreshProjectSecrets(
   cache: Cache<SecretMap>,
 ): Promise<CacheResult<SecretMap>> {
   if (providerInstanceId === null) {
-    throw new DEnvError("project has no provider instance", {
+    throw new EnvdError("project has no provider instance", {
       code: "usage_error",
       details: { projectId },
     });
@@ -593,7 +591,7 @@ async function refreshProjectSecrets(
   const repo = requireProviderInstanceRepo(providerInstanceRepo);
   const record = repo.get(providerInstanceId);
   if (record === undefined) {
-    throw new DEnvError("provider instance not found", {
+    throw new EnvdError("provider instance not found", {
       code: "provider_unreachable",
       details: { providerInstanceId },
     });
@@ -771,14 +769,14 @@ async function handleGetProjectStatus(
 
 function parseProjectPullBody(body: unknown): { force: boolean } {
   if (!isRecord(body)) {
-    throw new DEnvError("request body must be a JSON object", {
+    throw new EnvdError("request body must be a JSON object", {
       code: "usage_error",
     });
   }
 
   const force = body["force"];
   if (force !== undefined && typeof force !== "boolean") {
-    throw new DEnvError("force must be a boolean", {
+    throw new EnvdError("force must be a boolean", {
       code: "usage_error",
     });
   }
@@ -793,14 +791,14 @@ interface ParsedProjectCommitBody {
 
 function parseProjectCommitBody(body: unknown): ParsedProjectCommitBody {
   if (!isRecord(body)) {
-    throw new DEnvError("request body must be a JSON object", {
+    throw new EnvdError("request body must be a JSON object", {
       code: "usage_error",
     });
   }
 
   const message = body["message"];
   if (message !== undefined && typeof message !== "string") {
-    throw new DEnvError("message must be a string when provided", {
+    throw new EnvdError("message must be a string when provided", {
       code: "usage_error",
     });
   }
@@ -813,7 +811,7 @@ function parseProjectCommitBody(body: unknown): ParsedProjectCommitBody {
       : { message: parsedMessage, strategy: "abort" };
   }
   if (strategy !== "abort" && strategy !== "theirs" && strategy !== "ours") {
-    throw new DEnvError("strategy must be one of abort, theirs, or ours", {
+    throw new EnvdError("strategy must be one of abort, theirs, or ours", {
       code: "usage_error",
     });
   }
@@ -908,7 +906,7 @@ async function pushProjectChanges(
   changes: ChangeSet,
 ): Promise<PushResult> {
   if (providerInstanceId === null) {
-    throw new DEnvError("project has no provider instance", {
+    throw new EnvdError("project has no provider instance", {
       code: "usage_error",
       details: { projectId },
     });
@@ -918,7 +916,7 @@ async function pushProjectChanges(
   const keychainAdapter = requireKeychain(keychain);
   const record = repo.get(providerInstanceId);
   if (record === undefined) {
-    throw new DEnvError("provider instance not found", {
+    throw new EnvdError("provider instance not found", {
       code: "provider_unreachable",
       details: { providerInstanceId },
     });
@@ -926,7 +924,7 @@ async function pushProjectChanges(
 
   const provider = findProvider(record.provider);
   if (provider === undefined) {
-    throw new DEnvError("provider is not registered", {
+    throw new EnvdError("provider is not registered", {
       code: "usage_error",
       details: { provider: record.provider },
     });
@@ -945,10 +943,10 @@ async function pushProjectChanges(
       }
     }
   } catch (err: unknown) {
-    if (err instanceof DEnvError) {
+    if (err instanceof EnvdError) {
       throw err;
     }
-    throw new DEnvError("provider is unreachable", {
+    throw new EnvdError("provider is unreachable", {
       code: "provider_unreachable",
       cause: err,
     });
@@ -1141,7 +1139,7 @@ function parseCredentials(
   const rawCredentials =
     "credentials" in body ? body["credentials"] : Object.freeze({});
   if (!isRecord(rawCredentials)) {
-    throw new DEnvError("credentials must be a JSON object", {
+    throw new EnvdError("credentials must be a JSON object", {
       code: "usage_error",
     });
   }
@@ -1149,7 +1147,7 @@ function parseCredentials(
   const allowedKeys = new Set(provider.credentialKeys);
   for (const key of Object.keys(rawCredentials)) {
     if (!allowedKeys.has(key)) {
-      throw new DEnvError("credentials include an unknown key", {
+      throw new EnvdError("credentials include an unknown key", {
         code: "usage_error",
         details: { key },
       });
@@ -1160,7 +1158,7 @@ function parseCredentials(
   for (const key of provider.credentialKeys) {
     const value = rawCredentials[key];
     if (typeof value !== "string") {
-      throw new DEnvError("credentials must include string values", {
+      throw new EnvdError("credentials must include string values", {
         code: "usage_error",
         details: { key },
       });
@@ -1174,21 +1172,21 @@ function parseCreateProviderInstanceBody(
   body: unknown,
 ): ParsedCreateProviderInstanceBody {
   if (!isRecord(body)) {
-    throw new DEnvError("request body must be a JSON object", {
+    throw new EnvdError("request body must be a JSON object", {
       code: "usage_error",
     });
   }
 
   const providerName = body["provider"];
   if (typeof providerName !== "string" || providerName === "") {
-    throw new DEnvError("provider must be a non-empty string", {
+    throw new EnvdError("provider must be a non-empty string", {
       code: "usage_error",
     });
   }
 
   const provider = findProvider(providerName);
   if (provider === undefined) {
-    throw new DEnvError("provider is not registered", {
+    throw new EnvdError("provider is not registered", {
       code: "usage_error",
       details: { provider: providerName },
     });
@@ -1196,14 +1194,14 @@ function parseCreateProviderInstanceBody(
 
   const name = body["name"];
   if (typeof name !== "string" || name === "") {
-    throw new DEnvError("name must be a non-empty string", {
+    throw new EnvdError("name must be a non-empty string", {
       code: "usage_error",
     });
   }
 
   const config = "config" in body ? body["config"] : {};
   if (!isRecord(config)) {
-    throw new DEnvError("config must be a JSON object", {
+    throw new EnvdError("config must be a JSON object", {
       code: "usage_error",
     });
   }
@@ -1220,7 +1218,7 @@ function parseStoredConfig(record: ProviderInstanceRecord): unknown {
   try {
     return JSON.parse(record.config) as unknown;
   } catch (err: unknown) {
-    throw new DEnvError("provider instance config is malformed", {
+    throw new EnvdError("provider instance config is malformed", {
       code: "internal",
       details: { providerInstanceId: record.id },
       cause: err,
@@ -1278,7 +1276,7 @@ async function storeCredentials(
   for (const key of provider.credentialKeys) {
     const value = credentials[key];
     if (value === undefined) {
-      throw new DEnvError("credential is missing", {
+      throw new EnvdError("credential is missing", {
         code: "usage_error",
         details: { key },
       });
@@ -1440,7 +1438,7 @@ async function handleTestProviderInstance(
 
   const provider = findProvider(record.provider);
   if (provider === undefined) {
-    throw new DEnvError("provider is not registered", {
+    throw new EnvdError("provider is not registered", {
       code: "usage_error",
       details: { provider: record.provider },
     });
@@ -1491,9 +1489,8 @@ function controlPathLabel(path: string): string {
     return "/v1/projects/:id";
   }
 
-  const projectAction = /^\/v1\/projects\/[^/]+\/(diff|pull|commit|status)$/.exec(
-    path,
-  );
+  const projectAction =
+    /^\/v1\/projects\/[^/]+\/(diff|pull|commit|status)$/.exec(path);
   if (projectAction !== null) {
     return `/v1/projects/:id/${projectAction[1]}`;
   }

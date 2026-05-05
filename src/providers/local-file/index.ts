@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import type {
   ChangeSet,
   Provider,
@@ -31,7 +31,7 @@ function isLocalFileConfig(config: unknown): config is LocalFileConfig {
 
 function toSecretMap(value: unknown): SecretMap {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new DEnvError("local-file provider file must contain a JSON object", {
+    throw new EnvdError("local-file provider file must contain a JSON object", {
       code: "provider_unreachable",
     });
   }
@@ -39,7 +39,7 @@ function toSecretMap(value: unknown): SecretMap {
   const map: Record<string, string> = {};
   for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
     if (typeof raw !== "string") {
-      throw new DEnvError(
+      throw new EnvdError(
         "local-file provider file values must all be strings",
         { code: "provider_unreachable" },
       );
@@ -61,7 +61,7 @@ function readSecretMap(filePath: string): SecretMap {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return {};
     }
-    throw new DEnvError("local-file provider cannot read file", {
+    throw new EnvdError("local-file provider cannot read file", {
       code: "provider_unreachable",
       cause: err,
     });
@@ -130,7 +130,7 @@ function testReadable(
 
 function validateConfig(config: unknown): LocalFileConfig {
   if (!isLocalFileConfig(config) || config.path.trim() === "") {
-    throw new DEnvError("local-file provider requires config.path", {
+    throw new EnvdError("local-file provider requires config.path", {
       code: "usage_error",
     });
   }

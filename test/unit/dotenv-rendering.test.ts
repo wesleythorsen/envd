@@ -4,7 +4,7 @@ import {
   render,
   type DotenvOptions,
 } from "../../src/core/rendering/dotenv.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -17,17 +17,17 @@ function text(bytesToDecode: Uint8Array): string {
   return decoder.decode(bytesToDecode);
 }
 
-function expectBadDotenv(fn: () => unknown): DEnvError {
+function expectBadDotenv(fn: () => unknown): EnvdError {
   try {
     fn();
   } catch (err) {
-    expect(err).toBeInstanceOf(DEnvError);
-    const denvError = err as DEnvError;
+    expect(err).toBeInstanceOf(EnvdError);
+    const denvError = err as EnvdError;
     expect(denvError.code).toBe("bad_dotenv");
     return denvError;
   }
 
-  throw new Error("expected bad_dotenv DEnvError");
+  throw new Error("expected bad_dotenv EnvdError");
 }
 
 describe("dotenv rendering", () => {

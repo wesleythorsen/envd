@@ -12,11 +12,11 @@ import type {
 function withTempProject(
   fn: (projectDir: string) => Promise<void>,
 ): Promise<void> {
-  const dir = mkdtempSync(join(tmpdir(), "d-env-pull-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "envd-pull-test-"));
   const projectDir = join(dir, "project");
   mkdirSync(projectDir);
   writeFileSync(
-    join(projectDir, ".d-env.json"),
+    join(projectDir, ".envd.json"),
     JSON.stringify({ projectId: "project-1", version: 1 }),
   );
   return fn(projectDir).finally(() => {
@@ -92,7 +92,7 @@ describe("pull command", () => {
 
       const stdout = await runPull([projectDir], client);
 
-      expect(stdout).toBe("d-env pulled (snapshot fetched at 123456)\n");
+      expect(stdout).toBe("envd pulled (snapshot fetched at 123456)\n");
       expect(client.pullCalls).toEqual([{ id: "project-1", force: false }]);
       expect(client.diffCalls).toEqual([]);
     });

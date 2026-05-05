@@ -6,14 +6,14 @@ This plan moves the repo from empty to a working v0.1 (CLI + daemon + WebDAV + D
 
 - **M0 — Scaffolding in place.** Workspace layout, build, test, lint, CI-friendly scripts.
 - **M1 — WebDAV walking skeleton.** Daemon serves a static `.env` over WebDAV; macOS mounts it; a sample project reads it successfully.
-- **M2 — Control API + CLI skeleton.** CLI talks to daemon; `d-env daemon start/stop/status` works.
-- **M3 — Project registry + symlink.** `d-env init` registers a project, creates the symlink; reads go through the registry.
+- **M2 — Control API + CLI skeleton.** CLI talks to daemon; `envd daemon start/stop/status` works.
+- **M3 — Project registry + symlink.** `envd init` registers a project, creates the symlink; reads go through the registry.
 - **M4 — Provider abstraction + `local-file`.** Reads pull from a provider instead of a constant.
 - **M5 — Doppler provider.** Real-world read path works.
 - **M6 — Write path (staging).** WebDAV `PUT` stages a diff; reads show the merged view.
 - **M7 — `diff` / `commit` / `pull`.** Push staging back to the provider; conflict handling.
 - **M8 — Hardening.** Keychain-backed credentials, encrypted state, token auth on WebDAV, logs, structured errors, Linux support.
-- **M9 — Developer-experience polish.** `launchd` / `systemd` install, good error messages, `d-env status` depth, docs pass.
+- **M9 — Developer-experience polish.** `launchd` / `systemd` install, good error messages, `envd status` depth, docs pass.
 
 The first three milestones together prove the core hypothesis. Everything after is "make it real."
 
@@ -29,7 +29,7 @@ Tasks:
   - Keychain: `keytar` (native; evaluate; fallback: `envc`-style age-based file).
   - Dev/test: `vitest`, `@types/better-sqlite3`.
 - Expand `package.json`:
-  - `bin`: `"d-env": "dist/cli/main.js"`, `"d-envd": "dist/daemon/main.js"`.
+  - `bin`: `"envd": "dist/cli/main.js"`, `"envdd": "dist/daemon/main.js"`.
   - `scripts`: add `dev:cli`, `dev:daemon` (tsx watch), `test`, `test:watch`.
 - Create directory skeleton:
   ```
@@ -81,8 +81,8 @@ Tasks:
 - `src/mount/darwin.ts`: shell out to `mount_webdav`; implement `isMounted`, `mount`, `unmount`.
 - A throwaway script `scripts/smoke-macos.ts`:
   1. Starts the daemon.
-  2. Mounts at `/Volumes/d-env-smoke`.
-  3. `cat`s `/Volumes/d-env-smoke/hello/.env`.
+  2. Mounts at `/Volumes/envd-smoke`.
+  3. `cat`s `/Volumes/envd-smoke/hello/.env`.
   4. Asserts content.
   5. Unmounts, stops daemon.
 - Run this by hand on the dev machine.
@@ -102,20 +102,20 @@ Deliverable: `npm run smoke:macos` passes locally.
 Tasks:
 - `src/daemon/control/server.ts`: HTTP server on `127.0.0.1:1910`.
   - Endpoints: `/v1/health`, `/v1/version`, `/v1/shutdown`.
-  - Bearer-token auth from `~/.d-env/control.token` (generated on first boot).
+  - Bearer-token auth from `~/.envd/control.token` (generated on first boot).
 - `src/ipc/control-client.ts`: tiny client wrapping `undici` (or `node:fetch`).
 - `src/cli/main.ts` with `commander`:
-  - `d-env version` — prints CLI version and calls `/v1/version` for daemon version (if reachable).
-  - `d-env daemon start|stop|status` — spawns the daemon as a detached child, reads PID file, talks to `/v1/health`, calls `/v1/shutdown`.
+  - `envd version` — prints CLI version and calls `/v1/version` for daemon version (if reachable).
+  - `envd daemon start|stop|status` — spawns the daemon as a detached child, reads PID file, talks to `/v1/health`, calls `/v1/shutdown`.
 - Port/PID management in `src/shared/paths.ts`.
 
-Deliverable: `d-env daemon start && d-env daemon status && d-env daemon stop` works from a clean state.
+Deliverable: `envd daemon start && envd daemon status && envd daemon stop` works from a clean state.
 
 ---
 
 ## M3 — Project registry + symlink
 
-**Goal**: `d-env init` produces a working `.env` symlink that resolves to a real WebDAV-served file.
+**Goal**: `envd init` produces a working `.env` symlink that resolves to a real WebDAV-served file.
 
 Tasks:
 - SQLite state store in `src/core/state.ts` (better-sqlite3). Implement migrations system (simple numbered files under `src/core/migrations/`).
@@ -125,15 +125,15 @@ Tasks:
   - `GET /v1/projects/:id`.
 - WebDAV server:
   - Strip the hardcoded path; serve `/p/<id>.<tok>/.env` driven by the registry.
-  - For M3, content is a placeholder string like `# d-env project <id>` — no real provider yet.
+  - For M3, content is a placeholder string like `# envd project <id>` — no real provider yet.
   - `PUT` is a 405 for now.
 - CLI:
-  - `d-env init`: registers, creates `<cwd>/.env` symlink to the mount path, writes `.d-env.json` with `projectId` and non-secret metadata.
-  - `d-env status` (basic).
+  - `envd init`: registers, creates `<cwd>/.env` symlink to the mount path, writes `.envd.json` with `projectId` and non-secret metadata.
+  - `envd status` (basic).
 - Mount bootstrap: `init` checks for the mount and creates it if missing.
 - Add `.env` to `.gitignore` if missing.
 
-Deliverable: in a fresh scratch dir, `d-env init` produces `./.env` whose contents say `# d-env project …`. `cat .env` triggers a WebDAV read.
+Deliverable: in a fresh scratch dir, `envd init` produces `./.env` whose contents say `# envd project …`. `cat .env` triggers a WebDAV read.
 
 ---
 
@@ -151,15 +151,15 @@ Tasks:
   - `POST /v1/provider-instances`, `GET …`, `DELETE …`, `POST …/test`.
   - `POST /v1/projects` now requires `providerInstanceId`.
 - CLI:
-  - `d-env provider list|add|remove|test`.
-  - `d-env init` walks the user through provider-instance selection/creation.
+  - `envd provider list|add|remove|test`.
+  - `envd init` walks the user through provider-instance selection/creation.
 - `src/kinds/secrets/` + `src/core/rendering/dotenv.ts`: parse + render. Unit-test quoting edge cases (newlines, quotes, unicode, keys with dots).
 - WebDAV `GET` now:
   1. Loads project → provider instance.
   2. `instance.fetch()` (with cache wrap-around in `src/core/cache.ts`).
   3. Renders via `secrets + dotenv`.
 
-Deliverable: configure a `local-file` provider pointing at `./test.json`, run `d-env init`, edit `test.json`, re-read `.env`, see updated values.
+Deliverable: configure a `local-file` provider pointing at `./test.json`, run `envd init`, edit `test.json`, re-read `.env`, see updated values.
 
 ---
 
@@ -174,7 +174,7 @@ Tasks:
   - `test()` — cheap call like `v3/me` or a config GET.
   - Credentials via `ProviderContext.keychain`.
 - Integration test with `msw` to mock Doppler's endpoints.
-- Manual end-to-end: a real Doppler project (in a personal workspace, not prod) read through `d-env`.
+- Manual end-to-end: a real Doppler project (in a personal workspace, not prod) read through `envd`.
 
 Deliverable: reading `.env` from a project wired to Doppler returns real values.
 
@@ -195,9 +195,9 @@ Tasks:
 - Control API:
   - `GET /v1/projects/:id/diff` — structured diff.
 - CLI:
-  - `d-env diff` (keys only by default; `--values` to reveal).
+  - `envd diff` (keys only by default; `--values` to reveal).
 
-Deliverable: `echo "FOO=bar" >> .env && d-env diff` shows `+FOO=bar` staged.
+Deliverable: `echo "FOO=bar" >> .env && envd diff` shows `+FOO=bar` staged.
 
 ---
 
@@ -213,10 +213,10 @@ Tasks:
   - On success: clear staging, update snapshot, return applied `ChangeSet`.
 - `POST /v1/projects/:id/pull` (drops staging, refreshes).
 - CLI:
-  - `d-env commit [-m]`, `d-env pull [--force] [--dry-run]`.
+  - `envd commit [-m]`, `envd pull [--force] [--dry-run]`.
   - Interactive conflict resolver for v1 is stretch; `--theirs`/`--ours` is required.
 
-Deliverable: edit `.env`, `d-env diff`, `d-env commit -m "rotate S3 key"`, see value in Doppler UI.
+Deliverable: edit `.env`, `envd diff`, `envd commit -m "rotate S3 key"`, see value in Doppler UI.
 
 ---
 
@@ -228,7 +228,7 @@ Tasks:
 - **Keychain integration** for provider credentials and the per-daemon encryption key. Fallback: age-based encrypted file with passphrase cached via `ssh-agent`-like socket (stretch; start with an unencrypted fallback with a loud warning).
 - **Encrypt `snapshots.data` and `staging.desired`** at rest with the keychain-sealed key.
 - **Per-project token enforcement** on WebDAV paths; constant-time compare.
-- **Control API auth**: bearer from `~/.d-env/control.token`; file mode `0600`.
+- **Control API auth**: bearer from `~/.envd/control.token`; file mode `0600`.
 - **Structured logs** (JSON, rotated). Redaction guardrails — add a unit test that scans log output for values.
 - **Linux mount adapter**: `davfs2` shell-out. Document the one-time package install.
 - **Error codes**: exhaustive enum in `shared/errors.ts`; mapped to CLI exit codes; matched in tests.
@@ -243,8 +243,8 @@ Deliverable: security self-review checklist in a commit message, Linux smoke tes
 **Goal**: a new developer can get productive from `npm i -g` in under five minutes.
 
 Tasks:
-- `d-env daemon install` — write a `launchd` plist for macOS and a `systemd --user` unit for Linux.
-- `d-env status` is useful: daemon, mount, project, staging, last fetch, provider health.
+- `envd daemon install` — write a `launchd` plist for macOS and a `systemd --user` unit for Linux.
+- `envd status` is useful: daemon, mount, project, staging, last fetch, provider health.
 - Clear error messages for the failure modes that *actually* happen: mount missing, daemon not running, provider creds expired, Doppler 429, bad `.env` on `PUT`.
 - A single `README.md` (project root) walking a user through install → init → edit → commit.
 - `CHANGELOG.md` starts here; docs audit.

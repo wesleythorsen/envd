@@ -5,7 +5,7 @@
  * docker run --rm -it --cap-add SYS_ADMIN --device /dev/fuse \
  *   --security-opt apparmor:unconfined \
  *   -v "$PWD":/work -w /work node:22-bookworm bash -lc \
- *   "apt-get update && apt-get install -y davfs2 fuse3 && npm ci && npm run build && D_ENV_RUN_LINUX_MOUNT_IT=1 npm test -- test/integration/mount-linux.integration.test.ts"
+ *   "apt-get update && apt-get install -y davfs2 fuse3 && npm ci && npm run build && ENVD_RUN_LINUX_MOUNT_IT=1 npm test -- test/integration/mount-linux.integration.test.ts"
  *
  * The test is gated so it does not run in normal local npm test flows.
  */
@@ -21,30 +21,35 @@ import { ProjectRepo } from "../../src/core/project.js";
 import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
 
 const shouldRun =
-  process.platform === "linux" && process.env["D_ENV_RUN_LINUX_MOUNT_IT"] === "1";
+  process.platform === "linux" &&
+  process.env["ENVD_RUN_LINUX_MOUNT_IT"] === "1";
 
 describe("linux mount adapter (integration)", () => {
   it.skipIf(!shouldRun)(
     "mounts the WebDAV server, reads a file, and unmounts cleanly",
     async () => {
       const rand = Math.random().toString(36).slice(2, 8);
-      const mountPath = join(tmpdir(), `d-env-linux-it-${process.pid}-${rand}`);
+      const mountPath = join(tmpdir(), `envd-linux-it-${process.pid}-${rand}`);
       const statePath = join(
         tmpdir(),
-        `d-env-linux-it-${process.pid}-${rand}.db`,
+        `envd-linux-it-${process.pid}-${rand}.db`,
       );
       const projectPath = join(
         tmpdir(),
-        `d-env-linux-it-${process.pid}-${rand}-project`,
+        `envd-linux-it-${process.pid}-${rand}-project`,
       );
       const providerPath = join(
         tmpdir(),
-        `d-env-linux-it-${process.pid}-${rand}-secrets.json`,
+        `envd-linux-it-${process.pid}-${rand}-secrets.json`,
       );
 
       await mkdir(mountPath);
       await mkdir(projectPath, { recursive: true });
-      await writeFile(providerPath, JSON.stringify({ HELLO: "world" }), "utf-8");
+      await writeFile(
+        providerPath,
+        JSON.stringify({ HELLO: "world" }),
+        "utf-8",
+      );
 
       const state = openState(statePath);
       const projectRepo = new ProjectRepo(state.db);

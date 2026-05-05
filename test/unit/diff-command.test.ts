@@ -45,11 +45,11 @@ function fakeClient(result: ProjectDiffResult): ControlClient {
 function withTempProject(
   fn: (projectDir: string) => Promise<void>,
 ): Promise<void> {
-  const dir = mkdtempSync(join(tmpdir(), "d-env-diff-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "envd-diff-test-"));
   const projectDir = join(dir, "project");
   mkdirSync(projectDir);
   writeFileSync(
-    join(projectDir, ".d-env.json"),
+    join(projectDir, ".envd.json"),
     JSON.stringify({ projectId: "project-1", version: 1 }),
   );
   return fn(projectDir).finally(() => {

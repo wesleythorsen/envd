@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createLogger } from "../../src/shared/logger.js";
 import type { ProviderContext } from "../../src/providers/base.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 
 type MockAwsInput = Record<string, unknown>;
 type MockAwsResponse = Record<string, unknown>;
@@ -127,19 +127,19 @@ async function createInstance(
   return provider.create(makeContext(), config);
 }
 
-function isDEnvErrorLike(err: unknown): err is DEnvError {
+function isEnvdErrorLike(err: unknown): err is EnvdError {
   return err instanceof Error && typeof Reflect.get(err, "code") === "string";
 }
 
-async function expectDEnvError(promise: Promise<unknown>): Promise<DEnvError> {
+async function expectEnvdError(promise: Promise<unknown>): Promise<EnvdError> {
   try {
     await promise;
   } catch (err: unknown) {
-    if (isDEnvErrorLike(err)) {
-      expect(err.name).toBe("DEnvError");
+    if (isEnvdErrorLike(err)) {
+      expect(err.name).toBe("EnvdError");
       return err;
     }
-    throw new Error("expected DEnvError", { cause: err });
+    throw new Error("expected EnvdError", { cause: err });
   }
   throw new Error("expected promise to reject");
 }
@@ -286,7 +286,7 @@ describe("aws secrets manager provider", () => {
     awsState.handlers.push(accessDenied);
 
     const provider = await createInstance();
-    const err = await expectDEnvError(provider.fetch());
+    const err = await expectEnvdError(provider.fetch());
 
     expect(err.code).toBe("provider_auth");
   });
@@ -297,7 +297,7 @@ describe("aws secrets manager provider", () => {
     awsState.handlers.push(throttled);
 
     const provider = await createInstance();
-    const err = await expectDEnvError(provider.fetch());
+    const err = await expectEnvdError(provider.fetch());
 
     expect(err.code).toBe("provider_unreachable");
   });
@@ -309,7 +309,7 @@ describe("aws secrets manager provider", () => {
     );
 
     const provider = await createInstance();
-    const err = await expectDEnvError(provider.fetch());
+    const err = await expectEnvdError(provider.fetch());
 
     expect(err.code).toBe("provider_unreachable");
     expect(err.message).toContain("SecretBinary");

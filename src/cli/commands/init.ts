@@ -11,7 +11,7 @@ import type {
   ProjectDetail,
 } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import { writeCliError } from "../error-output.js";
 import { createMountAdapter } from "../../mount/index.js";
 import { mountPath, portsFile } from "../../shared/paths.js";
@@ -19,10 +19,9 @@ import type { MountAdapter } from "../../mount/adapter.js";
 import { addProviderInstance, type ProviderCommandDeps } from "./provider.js";
 import {
   ENV_FILE,
-  PROJECT_FILE,
   ensureEnvSymlink,
   ensureGitignore,
-  parseProjectFile,
+  readProjectFile,
   writeProjectFile,
   type ProjectFile,
 } from "../project-files.js";
@@ -61,7 +60,7 @@ function readWebdavUrl(): string {
   >;
   const webdav = ports["webdav"];
   if (typeof webdav !== "number") {
-    throw new DEnvError("ports file is missing webdav port", {
+    throw new EnvdError("ports file is missing webdav port", {
       code: "daemon_unreachable",
     });
   }
@@ -90,7 +89,7 @@ async function ensureMounted(adapter: MountAdapter): Promise<void> {
 
 async function promptConfirm(projectPath: string): Promise<boolean> {
   const answer = await defaultPrompt(
-    `Initialize d-env in ${projectPath}? [y/N]`,
+    `Initialize envd in ${projectPath}? [y/N]`,
   );
   return answer.trim().toLowerCase() === "y";
 }
@@ -102,9 +101,9 @@ function printResult(result: InitResult, json: boolean | undefined): void {
   }
 
   if (result.status === "already_initialized") {
-    process.stdout.write(`d-env already initialized (${result.projectId})\n`);
+    process.stdout.write(`envd already initialized (${result.projectId})\n`);
   } else {
-    process.stdout.write(`d-env initialized (${result.projectId})\n`);
+    process.stdout.write(`envd initialized (${result.projectId})\n`);
   }
 }
 
@@ -117,9 +116,9 @@ async function existingProjectResult(
   try {
     project = await client.getProject(projectFile.projectId);
   } catch (err: unknown) {
-    if (err instanceof DEnvError && err.code === "not_found") {
-      throw new DEnvError(
-        "this project is not registered on this machine; run d-env init again after removing .d-env.json",
+    if (err instanceof EnvdError && err.code === "not_found") {
+      throw new EnvdError(
+        "this project is not registered on this machine; run envd init again after removing .envd.json",
         { code: "not_initialized" },
       );
     }
@@ -160,7 +159,7 @@ async function newProjectResult(
 
 function requireNonEmptyFlag(value: string, flag: string): string {
   if (value.trim() === "") {
-    throw new DEnvError(`${flag} must be non-empty`, {
+    throw new EnvdError(`${flag} must be non-empty`, {
       code: "usage_error",
     });
   }
@@ -189,7 +188,7 @@ async function promptProviderName(
   prompt: NonNullable<ProviderCommandDeps["prompt"]>,
 ): Promise<string> {
   if (providers.length === 0) {
-    throw new DEnvError("no providers are registered", {
+    throw new EnvdError("no providers are registered", {
       code: "usage_error",
     });
   }
@@ -197,7 +196,7 @@ async function promptProviderName(
   if (providers.length === 1) {
     const onlyProvider = providers[0];
     if (onlyProvider === undefined) {
-      throw new DEnvError("no providers are registered", {
+      throw new EnvdError("no providers are registered", {
         code: "usage_error",
       });
     }
@@ -333,7 +332,7 @@ function validateProviderInstanceFlags(options: InitOptions): void {
     options.configJson !== undefined ||
     options.credentialsJson !== undefined
   ) {
-    throw new DEnvError(
+    throw new EnvdError(
       "--provider-instance cannot be combined with provider creation flags",
       { code: "usage_error" },
     );
@@ -404,7 +403,7 @@ export async function initProject(
 ): Promise<InitResult> {
   const projectDir = resolve(projectPath ?? process.cwd());
   if (!existsSync(projectDir)) {
-    throw new DEnvError("project path does not exist", {
+    throw new EnvdError("project path does not exist", {
       code: "usage_error",
       details: { path: projectDir },
     });
@@ -413,7 +412,7 @@ export async function initProject(
   if (options.yes !== true) {
     const confirm = deps.confirm ?? promptConfirm;
     if (!(await confirm(projectDir))) {
-      throw new DEnvError("initialization cancelled", { code: "usage_error" });
+      throw new EnvdError("initialization cancelled", { code: "usage_error" });
     }
   }
 
@@ -422,13 +421,9 @@ export async function initProject(
     await ensureMounted(adapter);
   }
 
-  const projectFilePath = join(projectDir, PROJECT_FILE);
-  if (existsSync(projectFilePath)) {
-    return existingProjectResult(
-      deps.client,
-      projectDir,
-      parseProjectFile(projectFilePath),
-    );
+  const projectFile = readProjectFile(projectDir);
+  if (projectFile !== null) {
+    return existingProjectResult(deps.client, projectDir, projectFile);
   }
 
   const providerInstanceId = await selectProviderInstanceId(options, deps);
@@ -437,7 +432,7 @@ export async function initProject(
 
 export function buildInitCommand(): Command {
   return new Command("init")
-    .description("Initialize d-env in a project directory")
+    .description("Initialize envd in a project directory")
     .argument("[path]", "project directory")
     .option("--yes", "skip confirmation prompt")
     .option("--provider-instance <id>", "provider instance id to use")

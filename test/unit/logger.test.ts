@@ -21,15 +21,15 @@ function captureStderr(fn: () => void): string {
   return lines.join("");
 }
 
-describe("JSON format (D_ENV_LOG_FORMAT=json)", () => {
+describe("JSON format (ENVD_LOG_FORMAT=json)", () => {
   beforeEach(() => {
-    process.env["D_ENV_LOG_FORMAT"] = "json";
-    process.env["D_ENV_LOG_LEVEL"] = "debug";
+    process.env["ENVD_LOG_FORMAT"] = "json";
+    process.env["ENVD_LOG_LEVEL"] = "debug";
   });
 
   afterEach(() => {
-    delete process.env["D_ENV_LOG_FORMAT"];
-    delete process.env["D_ENV_LOG_LEVEL"];
+    delete process.env["ENVD_LOG_FORMAT"];
+    delete process.env["ENVD_LOG_LEVEL"];
     resetLogWriter();
   });
 
@@ -75,12 +75,12 @@ describe("JSON format (D_ENV_LOG_FORMAT=json)", () => {
 
 describe("Human format (default)", () => {
   beforeEach(() => {
-    delete process.env["D_ENV_LOG_FORMAT"];
-    process.env["D_ENV_LOG_LEVEL"] = "debug";
+    delete process.env["ENVD_LOG_FORMAT"];
+    process.env["ENVD_LOG_LEVEL"] = "debug";
   });
 
   afterEach(() => {
-    delete process.env["D_ENV_LOG_LEVEL"];
+    delete process.env["ENVD_LOG_LEVEL"];
     resetLogWriter();
   });
 
@@ -111,41 +111,41 @@ describe("Human format (default)", () => {
 
 describe("Level filtering", () => {
   afterEach(() => {
-    delete process.env["D_ENV_LOG_LEVEL"];
-    delete process.env["D_ENV_LOG_FORMAT"];
+    delete process.env["ENVD_LOG_LEVEL"];
+    delete process.env["ENVD_LOG_FORMAT"];
     resetLogWriter();
   });
 
   it("suppresses debug when level=info (default)", () => {
-    delete process.env["D_ENV_LOG_LEVEL"];
+    delete process.env["ENVD_LOG_LEVEL"];
     const logger = createLogger("s");
     const out = captureStderr(() => logger.debug({ msg: "quiet" }));
     expect(out).toBe("");
   });
 
   it("emits info when level=info", () => {
-    process.env["D_ENV_LOG_LEVEL"] = "info";
+    process.env["ENVD_LOG_LEVEL"] = "info";
     const logger = createLogger("s");
     const out = captureStderr(() => logger.info({ msg: "visible" }));
     expect(out).toContain("visible");
   });
 
   it("suppresses info when level=warn", () => {
-    process.env["D_ENV_LOG_LEVEL"] = "warn";
+    process.env["ENVD_LOG_LEVEL"] = "warn";
     const logger = createLogger("s");
     const out = captureStderr(() => logger.info({ msg: "suppressed" }));
     expect(out).toBe("");
   });
 
   it("emits warn when level=warn", () => {
-    process.env["D_ENV_LOG_LEVEL"] = "warn";
+    process.env["ENVD_LOG_LEVEL"] = "warn";
     const logger = createLogger("s");
     const out = captureStderr(() => logger.warn({ msg: "shown" }));
     expect(out).toContain("shown");
   });
 
   it("suppresses warn when level=error", () => {
-    process.env["D_ENV_LOG_LEVEL"] = "error";
+    process.env["ENVD_LOG_LEVEL"] = "error";
     const logger = createLogger("s");
     const out = captureStderr(() => logger.warn({ msg: "hidden" }));
     expect(out).toBe("");
@@ -153,15 +153,15 @@ describe("Level filtering", () => {
 
   it("emits error at all levels", () => {
     for (const lvl of ["debug", "info", "warn", "error"] as const) {
-      process.env["D_ENV_LOG_LEVEL"] = lvl;
+      process.env["ENVD_LOG_LEVEL"] = lvl;
       const logger = createLogger("s");
       const out = captureStderr(() => logger.error({ msg: "always" }));
       expect(out).toContain("always");
     }
   });
 
-  it("unknown D_ENV_LOG_LEVEL falls back to info", () => {
-    process.env["D_ENV_LOG_LEVEL"] = "verbose";
+  it("unknown ENVD_LOG_LEVEL falls back to info", () => {
+    process.env["ENVD_LOG_LEVEL"] = "verbose";
     const logger = createLogger("s");
     const debugOut = captureStderr(() => logger.debug({ msg: "quiet" }));
     const infoOut = captureStderr(() => logger.info({ msg: "shown" }));

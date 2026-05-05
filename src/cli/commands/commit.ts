@@ -5,8 +5,7 @@ import {
   stdout as defaultStdout,
   stderr as defaultStderr,
 } from "node:process";
-import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import type {
   ControlClient,
   ProjectCommitResult,
@@ -14,10 +13,10 @@ import type {
   ProjectDiffResult,
 } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import { errorHintForCode, writeCliError } from "../error-output.js";
 import { formatDiff } from "./diff.js";
-import { PROJECT_FILE, parseProjectFile } from "../project-files.js";
+import { readProjectFile } from "../project-files.js";
 
 interface Writable {
   readonly isTTY?: boolean;
@@ -66,15 +65,15 @@ function err(deps: CommitCommandDeps, text: string): void {
 
 function resolveProjectId(projectPath: string | undefined): string {
   const projectDir = resolve(projectPath ?? process.cwd());
-  const projectFilePath = join(projectDir, PROJECT_FILE);
-  if (!existsSync(projectFilePath)) {
-    throw new DEnvError("project is not initialized", {
+  const projectFile = readProjectFile(projectDir);
+  if (projectFile === null) {
+    throw new EnvdError("project is not initialized", {
       code: "not_initialized",
       details: { path: projectDir },
     });
   }
 
-  return parseProjectFile(projectFilePath).projectId;
+  return projectFile.projectId;
 }
 
 function defaultConfirm(question: string): Promise<boolean> {
@@ -100,7 +99,7 @@ function hasDiff(diff: ProjectDiffResult): boolean {
 
 function resolveStrategy(options: CommitOptions): ProjectCommitStrategy {
   if (options.theirs === true && options.ours === true) {
-    throw new DEnvError("choose only one of --theirs or --ours", {
+    throw new EnvdError("choose only one of --theirs or --ours", {
       code: "usage_error",
     });
   }
@@ -134,7 +133,7 @@ async function confirmCommit(
   const confirm = deps.confirm ?? defaultConfirm;
   const accepted = await confirm("Commit these staged changes?");
   if (!accepted) {
-    throw new DEnvError("commit cancelled", {
+    throw new EnvdError("commit cancelled", {
       code: "usage_error",
     });
   }
@@ -169,7 +168,7 @@ function printHumanResult(result: CommitResult, deps: CommitCommandDeps): void {
   const deleteCount = result.applied.deletes.length;
   out(
     deps,
-    `d-env committed (upserts=${upsertCount}, deletes=${deleteCount})\n`,
+    `envd committed (upserts=${upsertCount}, deletes=${deleteCount})\n`,
   );
 }
 
@@ -201,7 +200,7 @@ function conflictKeysFromDetails(details: unknown): string[] {
 }
 
 function handleCommitError(errValue: unknown, deps: CommitCommandDeps): void {
-  if (errValue instanceof DEnvError && errValue.code === "commit_conflict") {
+  if (errValue instanceof EnvdError && errValue.code === "commit_conflict") {
     const keys = conflictKeysFromDetails(errValue.details);
     err(deps, `${errValue.message}\n`);
     if (keys.length > 0) {

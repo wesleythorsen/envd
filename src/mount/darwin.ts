@@ -1,6 +1,6 @@
 import { execFile as nodeExecFile } from "node:child_process";
 import { mkdir } from "node:fs/promises";
-import { DEnvError } from "../shared/errors.js";
+import { EnvdError } from "../shared/errors.js";
 import { createLogger } from "../shared/logger.js";
 import type { MountAdapter } from "./adapter.js";
 
@@ -99,13 +99,13 @@ export class DarwinMountAdapter implements MountAdapter {
     const { stderr, code } = await this.run("/sbin/mount_webdav", [
       "-S",
       "-v",
-      "d-env",
+      "envd",
       url,
       path,
     ]);
 
     if (code !== 0) {
-      throw new DEnvError("mount_webdav failed", {
+      throw new EnvdError("mount_webdav failed", {
         code: "mount_failed",
         details: { url, path, stderr },
       });
@@ -113,7 +113,7 @@ export class DarwinMountAdapter implements MountAdapter {
 
     const mounted = await this.isMounted(path);
     if (!mounted) {
-      throw new DEnvError(
+      throw new EnvdError(
         "mount_webdav returned success but path is not mounted",
         {
           code: "mount_failed",
@@ -143,7 +143,7 @@ export class DarwinMountAdapter implements MountAdapter {
       result.code === 16 || result.stderr.includes("Resource busy");
 
     if (!isBusy) {
-      throw new DEnvError("umount failed", {
+      throw new EnvdError("umount failed", {
         code: "mount_failed",
         details: { path, stderr: result.stderr, exitCode: result.code },
       });
@@ -155,7 +155,7 @@ export class DarwinMountAdapter implements MountAdapter {
 
     const retry = await this.run("/sbin/umount", [path]);
     if (retry.code !== 0) {
-      throw new DEnvError("umount failed after retry", {
+      throw new EnvdError("umount failed after retry", {
         code: "mount_failed",
         details: { path, stderr: retry.stderr, exitCode: retry.code },
       });

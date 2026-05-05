@@ -1,4 +1,5 @@
-/** Structured logger for d-env. JSON-per-line on D_ENV_LOG_FORMAT=json; concise human output otherwise. */
+/** Structured logger for envd. JSON-per-line on ENVD_LOG_FORMAT=json; concise human output otherwise. */
+import { LOG_FORMAT_ENV_VAR, LOG_LEVEL_ENV_VAR } from "./product.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -32,7 +33,7 @@ let writeLine: LogWriter = (line) => {
 };
 
 function resolveLevel(): LogLevel {
-  const raw = process.env["D_ENV_LOG_LEVEL"];
+  const raw = process.env[LOG_LEVEL_ENV_VAR];
   if (raw === "debug" || raw === "info" || raw === "warn" || raw === "error") {
     return raw;
   }
@@ -40,7 +41,7 @@ function resolveLevel(): LogLevel {
 }
 
 function resolveFormat(): "json" | "human" {
-  return process.env["D_ENV_LOG_FORMAT"] === "json" ? "json" : "human";
+  return process.env[LOG_FORMAT_ENV_VAR] === "json" ? "json" : "human";
 }
 
 export function setLogWriter(writer: LogWriter): void {

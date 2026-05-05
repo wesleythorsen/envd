@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
 import { ProjectRepo } from "../../src/core/project.js";
 import { openState } from "../../src/core/state.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 
 function withRepos(
   fn: (
@@ -14,7 +14,7 @@ function withRepos(
     projectPath: string,
   ) => void,
 ): void {
-  const dir = mkdtempSync(join(tmpdir(), "d-env-provider-instance-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "envd-provider-instance-test-"));
   const dbPath = join(dir, "state.db");
   const projectPath = join(dir, "project");
   const store = openState(dbPath);
@@ -72,7 +72,7 @@ describe("ProviderInstanceRepo", () => {
 
       expect(() => {
         providerInstanceRepo.delete(providerInstance.id);
-      }).toThrow(DEnvError);
+      }).toThrow(EnvdError);
       expect(providerInstanceRepo.get(providerInstance.id)).toEqual(
         providerInstance,
       );
@@ -86,14 +86,14 @@ describe("ProviderInstanceRepo", () => {
           provider: "",
           name: "Local file",
         });
-      }).toThrow(DEnvError);
+      }).toThrow(EnvdError);
 
       expect(() => {
         providerInstanceRepo.create({
           provider: "local-file",
           name: "   ",
         });
-      }).toThrow(DEnvError);
+      }).toThrow(EnvdError);
     });
   });
 });

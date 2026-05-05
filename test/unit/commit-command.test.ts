@@ -9,16 +9,16 @@ import type {
   ProjectDiffResult,
   ProjectCommitStrategy,
 } from "../../src/ipc/control-client.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 
 function withTempProject(
   fn: (projectDir: string) => Promise<void>,
 ): Promise<void> {
-  const dir = mkdtempSync(join(tmpdir(), "d-env-commit-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "envd-commit-test-"));
   const projectDir = join(dir, "project");
   mkdirSync(projectDir);
   writeFileSync(
-    join(projectDir, ".d-env.json"),
+    join(projectDir, ".envd.json"),
     JSON.stringify({ projectId: "project-1", version: 1 }),
   );
   return fn(projectDir).finally(() => {
@@ -26,13 +26,18 @@ function withTempProject(
   });
 }
 
-function fakeClient(opts: {
-  readonly diffResult?: ProjectDiffResult;
-  readonly commitImpl?: (
-    id: string,
-    input: { readonly message?: string; readonly strategy?: ProjectCommitStrategy },
-  ) => Promise<ProjectCommitResult>;
-} = {}): ControlClient & {
+function fakeClient(
+  opts: {
+    readonly diffResult?: ProjectDiffResult;
+    readonly commitImpl?: (
+      id: string,
+      input: {
+        readonly message?: string;
+        readonly strategy?: ProjectCommitStrategy;
+      },
+    ) => Promise<ProjectCommitResult>;
+  } = {},
+): ControlClient & {
   readonly diffCalls: string[];
   readonly commitCalls: Array<{
     readonly id: string;
@@ -97,12 +102,12 @@ async function runCommit(
   let stdout = "";
   let stderr = "";
   let exitCode: number | undefined;
-  const exitSpy = vi.spyOn(process, "exit").mockImplementation(
-    ((code?: number) => {
-      exitCode = code ?? 0;
-      throw new Error(`process.exit:${code ?? 0}`);
-    }) as (code?: string | number | null | undefined) => never,
-  );
+  const exitSpy = vi.spyOn(process, "exit").mockImplementation(((
+    code?: number,
+  ) => {
+    exitCode = code ?? 0;
+    throw new Error(`process.exit:${code ?? 0}`);
+  }) as (code?: number | null) => never);
 
   const command = buildCommitCommand({
     client,
@@ -158,7 +163,7 @@ describe("commit command", () => {
       expect(result.stderr).toBe("");
       expect(result.stdout).toBe(
         "About to push these keys:\n+ADDED\n~CHANGED\n-DELETED\n" +
-          "d-env committed (upserts=1, deletes=1)\n",
+          "envd committed (upserts=1, deletes=1)\n",
       );
       expect(confirm).toHaveBeenCalledWith("Commit these staged changes?");
       expect(client.diffCalls).toEqual(["project-1"]);
@@ -184,7 +189,7 @@ describe("commit command", () => {
       );
 
       expect(result.exitCode).toBeUndefined();
-      expect(result.stdout).toBe("d-env committed (upserts=1, deletes=1)\n");
+      expect(result.stdout).toBe("envd committed (upserts=1, deletes=1)\n");
       expect(confirm).not.toHaveBeenCalled();
       expect(client.diffCalls).toEqual([]);
       expect(client.commitCalls).toEqual([
@@ -229,7 +234,7 @@ describe("commit command", () => {
       const client = fakeClient({
         commitImpl: () =>
           Promise.reject(
-            new DEnvError(
+            new EnvdError(
               "Commit conflicts detected; retry with strategy='ours' or strategy='theirs'",
               {
                 code: "commit_conflict",
@@ -255,8 +260,8 @@ describe("commit command", () => {
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain("Commit conflicts detected");
       expect(result.stderr).toContain("Conflicting keys:\n  SHARED\n");
-      expect(result.stderr).toContain("d-env commit --ours");
-      expect(result.stderr).toContain("d-env commit --theirs");
+      expect(result.stderr).toContain("envd commit --ours");
+      expect(result.stderr).toContain("envd commit --theirs");
     });
   });
 });

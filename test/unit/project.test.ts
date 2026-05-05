@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
 import { openState } from "../../src/core/state.js";
 import { ProjectRepo } from "../../src/core/project.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 
 function withRepos(
   fn: (
@@ -14,7 +14,7 @@ function withRepos(
     projectPath: string,
   ) => void,
 ): void {
-  const dir = mkdtempSync(join(tmpdir(), "d-env-project-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "envd-project-test-"));
   const dbPath = join(dir, "state.db");
   const projectPath = join(dir, "project");
 
@@ -116,7 +116,7 @@ describe("ProjectRepo", () => {
     withRepos((repo) => {
       expect(() => {
         repo.create({ path: "relative/path" });
-      }).toThrow(DEnvError);
+      }).toThrow(EnvdError);
     });
   });
 
@@ -124,7 +124,7 @@ describe("ProjectRepo", () => {
     withRepos((repo, _providerInstanceRepo, projectPath) => {
       expect(() => {
         repo.create({ path: projectPath });
-      }).toThrow(DEnvError);
+      }).toThrow(EnvdError);
     });
   });
 
@@ -137,7 +137,7 @@ describe("ProjectRepo", () => {
           path: projectPath,
           providerInstanceId: "missing-provider-instance",
         });
-      }).toThrow(DEnvError);
+      }).toThrow(EnvdError);
     });
   });
 });

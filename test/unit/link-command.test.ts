@@ -17,7 +17,7 @@ import type {
   CreateProjectResult,
   ProjectDetail,
 } from "../../src/ipc/control-client.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 
 class FakeControlClient implements ControlClient {
   deletedProjectIds: string[] = [];
@@ -43,7 +43,7 @@ class FakeControlClient implements ControlClient {
   getProject(id: string): Promise<ProjectDetail> {
     if (this.project === null || this.project.id !== id) {
       return Promise.reject(
-        new DEnvError("Project not found", { code: "not_found" }),
+        new EnvdError("Project not found", { code: "not_found" }),
       );
     }
     return Promise.resolve(this.project);
@@ -78,7 +78,7 @@ class FakeControlClient implements ControlClient {
 function withTempProject(
   fn: (projectDir: string) => Promise<void>,
 ): Promise<void> {
-  const dir = mkdtempSync(join(tmpdir(), "d-env-link-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "envd-link-test-"));
   const projectDir = join(dir, "project");
   mkdirSync(projectDir);
   return fn(projectDir).finally(() => {
@@ -88,7 +88,7 @@ function withTempProject(
 
 function writeProjectFile(projectDir: string): void {
   writeFileSync(
-    join(projectDir, ".d-env.json"),
+    join(projectDir, ".envd.json"),
     JSON.stringify({ projectId: "project-1", version: 1 }),
   );
 }
@@ -103,12 +103,12 @@ function projectDetail(projectDir: string): ProjectDetail {
     formatConfig: "{}",
     createdAt: 1,
     updatedAt: 1,
-    mountPath: "/tmp/d-env-mount/p/project-1.token-1/.env",
+    mountPath: "/tmp/envd-mount/p/project-1.token-1/.env",
   };
 }
 
 describe("linkProject", () => {
-  it("recreates the .env symlink from an existing .d-env.json", async () => {
+  it("recreates the .env symlink from an existing .envd.json", async () => {
     await withTempProject(async (projectDir) => {
       writeProjectFile(projectDir);
       const client = new FakeControlClient(projectDetail(projectDir));
@@ -119,10 +119,10 @@ describe("linkProject", () => {
         status: "linked",
         projectId: "project-1",
         envPath: join(projectDir, ".env"),
-        symlinkTarget: "/tmp/d-env-mount/p/project-1.token-1/.env",
+        symlinkTarget: "/tmp/envd-mount/p/project-1.token-1/.env",
       });
       expect(readlinkSync(join(projectDir, ".env"))).toBe(
-        "/tmp/d-env-mount/p/project-1.token-1/.env",
+        "/tmp/envd-mount/p/project-1.token-1/.env",
       );
     });
   });
@@ -144,7 +144,7 @@ describe("unlinkProject", () => {
     await withTempProject(async (projectDir) => {
       writeProjectFile(projectDir);
       symlinkSync(
-        "/tmp/d-env-mount/p/project-1.token-1/.env",
+        "/tmp/envd-mount/p/project-1.token-1/.env",
         join(projectDir, ".env"),
       );
       const client = new FakeControlClient(projectDetail(projectDir));
@@ -171,7 +171,7 @@ describe("unlinkProject", () => {
     await withTempProject(async (projectDir) => {
       writeProjectFile(projectDir);
       symlinkSync(
-        "/tmp/d-env-mount/p/project-1.token-1/.env",
+        "/tmp/envd-mount/p/project-1.token-1/.env",
         join(projectDir, ".env"),
       );
       const client = new FakeControlClient(projectDetail(projectDir));

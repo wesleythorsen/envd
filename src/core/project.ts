@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Database } from "better-sqlite3";
-import { DEnvError } from "../shared/errors.js";
+import { EnvdError } from "../shared/errors.js";
 
 const DEFAULT_FORMAT_CONFIG = JSON.stringify({
   quote: "when-needed",
@@ -80,14 +80,14 @@ export class ProjectRepo {
 
   create(input: CreateProjectInput): Project {
     if (!isAbsolute(input.path)) {
-      throw new DEnvError("project path must be absolute", {
+      throw new EnvdError("project path must be absolute", {
         code: "usage_error",
         details: { path: input.path },
       });
     }
 
     if (!existsSync(input.path)) {
-      throw new DEnvError("project path does not exist", {
+      throw new EnvdError("project path does not exist", {
         code: "usage_error",
         details: { path: input.path },
       });
@@ -95,7 +95,7 @@ export class ProjectRepo {
 
     const providerInstanceId = input.providerInstanceId ?? null;
     if (providerInstanceId !== null && providerInstanceId.trim() === "") {
-      throw new DEnvError("providerInstanceId must be a non-empty string", {
+      throw new EnvdError("providerInstanceId must be a non-empty string", {
         code: "usage_error",
       });
     }
@@ -103,7 +103,7 @@ export class ProjectRepo {
       providerInstanceId !== null &&
       !providerInstanceExists(this.db, providerInstanceId)
     ) {
-      throw new DEnvError("provider instance does not exist", {
+      throw new EnvdError("provider instance does not exist", {
         code: "usage_error",
         details: { providerInstanceId },
       });

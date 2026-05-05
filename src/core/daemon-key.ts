@@ -1,8 +1,8 @@
 import { randomBytes as nodeRandomBytes } from "node:crypto";
-import { DEnvError } from "../shared/errors.js";
+import { EnvdError } from "../shared/errors.js";
+import { DAEMON_KEY_SERVICE_NAME } from "../shared/product.js";
 import type { KeychainAdapter } from "./keychain.js";
 
-const DAEMON_KEY_SERVICE = "d-env-daemon";
 const DAEMON_KEY_ACCOUNT = "staging-encryption-key";
 
 type RandomBytes = (size: number) => Buffer;
@@ -15,7 +15,7 @@ export interface DaemonKeyOptions {
 function parseStoredKey(raw: string): Buffer {
   const key = Buffer.from(raw, "base64");
   if (key.length !== 32) {
-    throw new DEnvError("daemon encryption key is invalid", {
+    throw new EnvdError("daemon encryption key is invalid", {
       code: "internal",
     });
   }
@@ -26,13 +26,16 @@ export async function loadOrCreateDaemonKey(
   keychain: KeychainAdapter,
   opts: DaemonKeyOptions = {},
 ): Promise<Buffer> {
-  const existing = await keychain.get(DAEMON_KEY_SERVICE, DAEMON_KEY_ACCOUNT);
+  const existing = await keychain.get(
+    DAEMON_KEY_SERVICE_NAME,
+    DAEMON_KEY_ACCOUNT,
+  );
   if (existing !== null) {
     return parseStoredKey(existing);
   }
 
   if (opts.mustExist === true) {
-    throw new DEnvError(
+    throw new EnvdError(
       "daemon encryption key is missing; cannot decrypt staged data",
       {
         code: "internal",
@@ -42,7 +45,7 @@ export async function loadOrCreateDaemonKey(
 
   const key = (opts.randomBytes ?? nodeRandomBytes)(32);
   await keychain.set(
-    DAEMON_KEY_SERVICE,
+    DAEMON_KEY_SERVICE_NAME,
     DAEMON_KEY_ACCOUNT,
     key.toString("base64"),
   );

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { openState } from "../../src/core/state.js";
 
 function withTempDb(fn: (path: string) => void): void {
-  const dir = mkdtempSync(join(tmpdir(), "d-env-state-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "envd-state-test-"));
   try {
     fn(join(dir, "state.db"));
   } finally {

@@ -20,7 +20,7 @@ const version = pkg.version as string;
 
 const program = new Command();
 
-program.name("d-env").description("CLI for the d-env daemon").version(version);
+program.name("envd").description("CLI for the envdd daemon").version(version);
 
 program
   .command("version")

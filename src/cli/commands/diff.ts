@@ -1,16 +1,15 @@
 import { Command } from "commander";
 import { stdout as defaultStdout } from "node:process";
-import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import type {
   ControlClient,
   ProjectDiffResult,
 } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import { colorize } from "../color.js";
 import { writeCliError } from "../error-output.js";
-import { PROJECT_FILE, parseProjectFile } from "../project-files.js";
+import { readProjectFile } from "../project-files.js";
 
 interface Writable {
   readonly isTTY?: boolean;
@@ -46,15 +45,14 @@ export async function diffProject(
   deps: DiffCommandDeps,
 ): Promise<ProjectDiffResult> {
   const projectDir = resolve(projectPath ?? process.cwd());
-  const projectFilePath = join(projectDir, PROJECT_FILE);
-  if (!existsSync(projectFilePath)) {
-    throw new DEnvError("project is not initialized", {
+  const projectFile = readProjectFile(projectDir);
+  if (projectFile === null) {
+    throw new EnvdError("project is not initialized", {
       code: "not_initialized",
       details: { path: projectDir },
     });
   }
 
-  const projectFile = parseProjectFile(projectFilePath);
   return resolveClient(deps).getProjectDiff(projectFile.projectId, {
     values: options.values === true,
   });

@@ -9,7 +9,7 @@ import type {
   ProjectStatusDetail,
 } from "../../src/ipc/control-client.js";
 import type { MountAdapter } from "../../src/mount/adapter.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 
 class FakeControlClient implements ControlClient {
   constructor(
@@ -45,7 +45,11 @@ class FakeControlClient implements ControlClient {
   }
 
   getProjectStatus(id: string): Promise<ProjectStatusDetail> {
-    if (this.status === null || this.project === null || this.project.id !== id) {
+    if (
+      this.status === null ||
+      this.project === null ||
+      this.project.id !== id
+    ) {
       return Promise.reject(new Error("not found"));
     }
     return Promise.resolve(this.status);
@@ -87,7 +91,7 @@ class FakeMountAdapter implements MountAdapter {
 }
 
 function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
-  const dir = mkdtempSync(join(tmpdir(), "d-env-status-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "envd-status-test-"));
   return fn(dir).finally(() => {
     rmSync(dir, { recursive: true, force: true });
   });
@@ -115,9 +119,9 @@ describe("getStatus", () => {
 
   it("adds project details inside an initialized directory", async () => {
     await withTempDir(async (dir) => {
-      const envTarget = "/tmp/d-env-mount/p/project-1.token-1/.env";
+      const envTarget = "/tmp/envd-mount/p/project-1.token-1/.env";
       writeFileSync(
-        join(dir, ".d-env.json"),
+        join(dir, ".envd.json"),
         JSON.stringify({ projectId: "project-1", version: 1 }),
       );
       symlinkSync(envTarget, join(dir, ".env"));
@@ -176,7 +180,7 @@ describe("getStatus", () => {
       const status = await getStatus({
         projectPath: dir,
         createClient: () => {
-          throw new DEnvError("no daemon", { code: "daemon_unreachable" });
+          throw new EnvdError("no daemon", { code: "daemon_unreachable" });
         },
         mountAdapter: new FakeMountAdapter(false),
       });

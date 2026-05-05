@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { fetch } from "undici";
 import { createControlClient } from "../../ipc/control-client.js";
 import { controlTokenFile, pidFile, portsFile } from "../../shared/paths.js";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import { writeCliError } from "../error-output.js";
 import {
   installLaunchdAgent as defaultInstallLaunchdAgent,
@@ -107,7 +107,7 @@ function readControlToken(): string {
     return readFileSync(controlTokenFile(), "utf-8").trim();
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new DEnvError("control token missing", {
+      throw new EnvdError("control token missing", {
         code: "daemon_unreachable",
       });
     }
@@ -200,7 +200,7 @@ function handleDaemonCommandError(
 function logsUrl(tail: number, follow: boolean): string {
   const ports = readPorts();
   if (ports === undefined) {
-    throw new DEnvError("daemon is not running (no ports file)", {
+    throw new EnvdError("daemon is not running (no ports file)", {
       code: "daemon_unreachable",
     });
   }
@@ -219,7 +219,7 @@ export async function readDaemonLogs(
 ): Promise<void> {
   const tail = opts.tail === undefined ? 100 : Number.parseInt(opts.tail, 10);
   if (!Number.isInteger(tail) || tail < 0) {
-    throw new DEnvError("tail must be a non-negative integer", {
+    throw new EnvdError("tail must be a non-negative integer", {
       code: "usage_error",
     });
   }
@@ -228,7 +228,7 @@ export async function readDaemonLogs(
     headers: { Authorization: `Bearer ${readControlToken()}` },
   });
   if (!response.ok) {
-    throw new DEnvError(`daemon logs request failed (${response.status})`, {
+    throw new EnvdError(`daemon logs request failed (${response.status})`, {
       code: "daemon_unreachable",
     });
   }
@@ -289,7 +289,7 @@ async function doStart(opts: { json?: boolean }): Promise<void> {
       await existingClient.health();
       // It's alive and responding.
       out(
-        `d-envd already running (pid=${pid}, control=${ports?.control ?? "?"}, webdav=${ports?.webdav ?? "?"})`,
+        `envdd already running (pid=${pid}, control=${ports?.control ?? "?"}, webdav=${ports?.webdav ?? "?"})`,
         { status: "already_running", pid, ports },
         opts.json,
       );
@@ -308,14 +308,14 @@ async function doStart(opts: { json?: boolean }): Promise<void> {
 
   const healthy = await waitForHealthy(5000);
   if (!healthy) {
-    process.stderr.write("d-envd did not become healthy within 5 seconds.\n");
+    process.stderr.write("envdd did not become healthy within 5 seconds.\n");
     process.exit(1);
   }
 
   const startedPid = readPid();
   const startedPorts = readPorts();
   out(
-    `d-envd started (pid=${startedPid ?? "?"}, control=${startedPorts?.control ?? "?"}, webdav=${startedPorts?.webdav ?? "?"})`,
+    `envdd started (pid=${startedPid ?? "?"}, control=${startedPorts?.control ?? "?"}, webdav=${startedPorts?.webdav ?? "?"})`,
     { status: "started", pid: startedPid, ports: startedPorts },
     opts.json,
   );
@@ -339,7 +339,7 @@ async function stopDaemon(): Promise<"not_running" | "stopped" | "killed"> {
     stopped = await waitForDead(pid, 5000);
   } catch (err: unknown) {
     // If the client can't connect, treat as already stopped.
-    if (err instanceof DEnvError && err.code === "daemon_unreachable") {
+    if (err instanceof EnvdError && err.code === "daemon_unreachable") {
       stopped = true;
     }
   }
@@ -372,20 +372,20 @@ async function stopDaemon(): Promise<"not_running" | "stopped" | "killed"> {
 async function doStop(opts: { json?: boolean }): Promise<void> {
   const result = await stopDaemon();
   if (result === "not_running") {
-    out("d-envd is not running", { status: "not_running" }, opts.json);
+    out("envdd is not running", { status: "not_running" }, opts.json);
     process.exit(0);
   }
   if (result === "killed") {
-    out("d-envd stopped (SIGKILL)", { status: "killed" }, opts.json);
+    out("envdd stopped (SIGKILL)", { status: "killed" }, opts.json);
     process.exit(1);
   }
-  out("d-envd stopped", { status: "stopped" }, opts.json);
+  out("envdd stopped", { status: "stopped" }, opts.json);
 }
 
 async function doStatus(opts: { json?: boolean }): Promise<void> {
   const pid = readPid();
   if (pid === undefined || !isPidAlive(pid)) {
-    out("d-envd is not running", { status: "not_running" }, opts.json);
+    out("envdd is not running", { status: "not_running" }, opts.json);
     return;
   }
 
@@ -411,7 +411,7 @@ async function doStatus(opts: { json?: boolean }): Promise<void> {
       true,
     );
   } else {
-    process.stdout.write(`d-envd is running\n`);
+    process.stdout.write(`envdd is running\n`);
     process.stdout.write(`  pid:          ${pid}\n`);
     process.stdout.write(`  control port: ${ports?.control ?? "(unknown)"}\n`);
     process.stdout.write(`  webdav port:  ${ports?.webdav ?? "(unknown)"}\n`);
@@ -457,7 +457,7 @@ async function doInstall(
     return;
   }
 
-  writeStdout(deps, `d-envd launchd agent installed (${result.plistPath})\n`);
+  writeStdout(deps, `envdd launchd agent installed (${result.plistPath})\n`);
 }
 
 async function doUninstall(
@@ -481,11 +481,11 @@ async function doUninstall(
   }
 
   if (result.status === "not_installed") {
-    writeStdout(deps, `d-envd launchd agent is not installed\n`);
+    writeStdout(deps, `envdd launchd agent is not installed\n`);
     return;
   }
 
-  writeStdout(deps, `d-envd launchd agent uninstalled (${result.plistPath})\n`);
+  writeStdout(deps, `envdd launchd agent uninstalled (${result.plistPath})\n`);
 }
 
 function printSystemdResult(
@@ -501,14 +501,14 @@ function printSystemdResult(
   if (result.status === "installed") {
     writeStdout(
       deps,
-      `d-envd systemd user service installed and started\n  unit: ${result.unitPath}\n`,
+      `envdd systemd user service installed and started\n  unit: ${result.unitPath}\n`,
     );
     return;
   }
 
   writeStdout(
     deps,
-    `d-envd systemd user service stopped and uninstalled\n  unit: ${result.unitPath}\n`,
+    `envdd systemd user service stopped and uninstalled\n  unit: ${result.unitPath}\n`,
   );
 }
 
@@ -518,7 +518,7 @@ function printSystemdResult(
 
 export function buildDaemonCommand(deps: DaemonCommandDeps = {}): Command {
   const daemon = new Command("daemon").description(
-    "Manage the d-envd background daemon",
+    "Manage the envdd background daemon",
   );
 
   daemon

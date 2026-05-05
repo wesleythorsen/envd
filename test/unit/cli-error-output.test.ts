@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatCliError, writeCliError } from "../../src/cli/error-output.js";
-import { DEnvError, ERROR_CODES } from "../../src/shared/errors.js";
+import { EnvdError, ERROR_CODES } from "../../src/shared/errors.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -27,20 +27,20 @@ describe("formatCliError", () => {
   it("formats daemon_unreachable with an actionable hint", () => {
     expect(
       formatCliError(
-        new DEnvError("example daemon_unreachable", {
+        new EnvdError("example daemon_unreachable", {
           code: "daemon_unreachable",
         }),
       ),
     ).toMatchInlineSnapshot(`
       "example daemon_unreachable
-      Try: start the daemon with \`d-env daemon start\` or inspect \`d-env daemon status\`, then rerun the command."
+      Try: start the daemon with \`envd daemon start\` or inspect \`envd daemon status\`, then rerun the command."
     `);
   });
 
   it("formats usage_error with an actionable hint", () => {
     expect(
       formatCliError(
-        new DEnvError("example usage_error", {
+        new EnvdError("example usage_error", {
           code: "usage_error",
         }),
       ),
@@ -53,98 +53,98 @@ describe("formatCliError", () => {
   it("formats provider_unreachable with an actionable hint", () => {
     expect(
       formatCliError(
-        new DEnvError("example provider_unreachable", {
+        new EnvdError("example provider_unreachable", {
           code: "provider_unreachable",
         }),
       ),
     ).toMatchInlineSnapshot(`
       "example provider_unreachable
-      Try: run \`d-env provider test <id>\` and verify the provider host, network access, or service limits."
+      Try: run \`envd provider test <id>\` and verify the provider host, network access, or service limits."
     `);
   });
 
   it("formats provider_auth with an actionable hint", () => {
     expect(
       formatCliError(
-        new DEnvError("example provider_auth", {
+        new EnvdError("example provider_auth", {
           code: "provider_auth",
         }),
       ),
     ).toMatchInlineSnapshot(`
       "example provider_auth
-      Try: update the provider credentials, then rerun \`d-env provider test <id>\`."
+      Try: update the provider credentials, then rerun \`envd provider test <id>\`."
     `);
   });
 
   it("formats commit_conflict with an actionable hint", () => {
     expect(
       formatCliError(
-        new DEnvError("example commit_conflict", {
+        new EnvdError("example commit_conflict", {
           code: "commit_conflict",
         }),
       ),
     ).toMatchInlineSnapshot(`
       "example commit_conflict
-      Try: rerun with \`d-env commit --ours\` to keep local values or \`d-env commit --theirs\` to accept remote values."
+      Try: rerun with \`envd commit --ours\` to keep local values or \`envd commit --theirs\` to accept remote values."
     `);
   });
 
   it("formats mount_failed with an actionable hint", () => {
     expect(
       formatCliError(
-        new DEnvError("example mount_failed", {
+        new EnvdError("example mount_failed", {
           code: "mount_failed",
         }),
       ),
     ).toMatchInlineSnapshot(`
       "example mount_failed
-      Try: run \`d-env status\` to inspect the mount, then restart the daemon and relink the project."
+      Try: run \`envd status\` to inspect the mount, then restart the daemon and relink the project."
     `);
   });
 
   it("formats not_initialized with an actionable hint", () => {
     expect(
       formatCliError(
-        new DEnvError("example not_initialized", {
+        new EnvdError("example not_initialized", {
           code: "not_initialized",
         }),
       ),
     ).toMatchInlineSnapshot(`
       "example not_initialized
-      Try: run \`d-env init\` in this project directory before retrying the command."
+      Try: run \`envd init\` in this project directory before retrying the command."
     `);
   });
 
   it("formats internal with an actionable hint", () => {
     expect(
       formatCliError(
-        new DEnvError("example internal", {
+        new EnvdError("example internal", {
           code: "internal",
         }),
       ),
     ).toMatchInlineSnapshot(`
       "example internal
-      Try: rerun the command, then inspect \`d-env daemon logs --tail 100\` if the problem persists."
+      Try: rerun the command, then inspect \`envd daemon logs --tail 100\` if the problem persists."
     `);
   });
 
   it("formats bad_dotenv with an actionable hint", () => {
     expect(
       formatCliError(
-        new DEnvError("example bad_dotenv", {
+        new EnvdError("example bad_dotenv", {
           code: "bad_dotenv",
         }),
       ),
     ).toMatchInlineSnapshot(`
       "example bad_dotenv
-      Try: fix the .env syntax and rerun the command, or inspect the rendered output with \`d-env diff --values\`."
+      Try: fix the .env syntax and rerun the command, or inspect the rendered output with \`envd diff --values\`."
     `);
   });
 
   it("formats unauthorized with an actionable hint", () => {
     expect(
       formatCliError(
-        new DEnvError("example unauthorized", {
+        new EnvdError("example unauthorized", {
           code: "unauthorized",
         }),
       ),
@@ -157,7 +157,7 @@ describe("formatCliError", () => {
   it("formats not_found with an actionable hint", () => {
     expect(
       formatCliError(
-        new DEnvError("example not_found", {
+        new EnvdError("example not_found", {
           code: "not_found",
         }),
       ),
@@ -170,7 +170,7 @@ describe("formatCliError", () => {
   it("formats method_not_allowed with an actionable hint", () => {
     expect(
       formatCliError(
-        new DEnvError("example method_not_allowed", {
+        new EnvdError("example method_not_allowed", {
           code: "method_not_allowed",
         }),
       ),
@@ -180,7 +180,7 @@ describe("formatCliError", () => {
     `);
   });
 
-  it("falls back to raw Error messages for non-DEnv errors", () => {
+  it("falls back to raw Error messages for non-Envd errors", () => {
     expect(formatCliError(new Error("plain error"))).toBe("plain error");
   });
 
@@ -198,7 +198,7 @@ describe("writeCliError", () => {
 
     expect(() =>
       writeCliError(
-        new DEnvError("project is not initialized", {
+        new EnvdError("project is not initialized", {
           code: "not_initialized",
         }),
         {
@@ -215,7 +215,7 @@ describe("writeCliError", () => {
     exitSpy.mockRestore();
     expect(stderr).toBe(
       "project is not initialized\n" +
-        "Try: run `d-env init` in this project directory before retrying the command.\n",
+        "Try: run `envd init` in this project directory before retrying the command.\n",
     );
   });
 });

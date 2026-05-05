@@ -1,19 +1,11 @@
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  readLogTail,
-  RotatingFileLogSink,
-} from "../../src/shared/log-file.js";
+import { readLogTail, RotatingFileLogSink } from "../../src/shared/log-file.js";
 
 function withTempDir(fn: (dir: string) => void): void {
-  const dir = mkdtempSync(join(tmpdir(), "d-env-log-file-test-"));
+  const dir = mkdtempSync(join(tmpdir(), "envd-log-file-test-"));
   try {
     fn(dir);
   } finally {
@@ -23,12 +15,12 @@ function withTempDir(fn: (dir: string) => void): void {
 
 describe("RotatingFileLogSink", () => {
   afterEach(() => {
-    delete process.env["D_ENV_HOME"];
+    delete process.env["ENVD_HOME"];
   });
 
   it("rotates once the active file would exceed the size limit", () => {
     withTempDir((dir) => {
-      const path = join(dir, "d-envd.log");
+      const path = join(dir, "envdd.log");
       const sink = new RotatingFileLogSink(path, {
         maxBytes: 12,
         maxFiles: 3,
@@ -48,7 +40,7 @@ describe("RotatingFileLogSink", () => {
 
   it("reads a tail across rotated files in chronological order", () => {
     withTempDir((dir) => {
-      const path = join(dir, "d-envd.log");
+      const path = join(dir, "envdd.log");
       const sink = new RotatingFileLogSink(path, {
         maxBytes: 12,
         maxFiles: 3,

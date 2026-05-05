@@ -14,7 +14,11 @@ import {
 import { dirname, join } from "node:path";
 import { createLogger, type Logger } from "../shared/logger.js";
 import { stateDir } from "../shared/paths.js";
-import { DEnvError } from "../shared/errors.js";
+import { EnvdError } from "../shared/errors.js";
+import {
+  KEYCHAIN_APPLICATION_NAME,
+  SECRET_ENV_VAR,
+} from "../shared/product.js";
 import type { KeychainAdapter } from "../providers/base.js";
 
 export type { KeychainAdapter };
@@ -82,8 +86,8 @@ function commandFailure(
   command: string,
   result: CommandResult,
   message = "keychain command failed",
-): DEnvError {
-  return new DEnvError(message, {
+): EnvdError {
+  return new EnvdError(message, {
     code: "internal",
     details: {
       command,
@@ -159,15 +163,15 @@ export class MacOSSecurityKeychainAdapter implements KeychainAdapter {
       "/bin/sh",
       [
         "-c",
-        'exec security add-generic-password "$@" -w "$D_ENV_SECRET"',
-        "d-env-security",
+        `exec security add-generic-password "$@" -w "$${SECRET_ENV_VAR}"`,
+        `${KEYCHAIN_APPLICATION_NAME}-security`,
         "-s",
         service,
         "-a",
         account,
         "-U",
       ],
-      { env: { D_ENV_SECRET: secret } },
+      { env: { [SECRET_ENV_VAR]: secret } },
     );
     if (result.code !== 0) {
       throw commandFailure("security", result);
@@ -227,9 +231,9 @@ export class SecretToolKeychainAdapter implements KeychainAdapter {
       [
         "store",
         "--label",
-        `d-env ${service}/${account}`,
+        `${KEYCHAIN_APPLICATION_NAME} ${service}/${account}`,
         "application",
-        "d-env",
+        KEYCHAIN_APPLICATION_NAME,
         "service",
         service,
         "account",
@@ -243,10 +247,22 @@ export class SecretToolKeychainAdapter implements KeychainAdapter {
   }
 
   async get(service: string, account: string): Promise<string | null> {
+    return this.lookup(KEYCHAIN_APPLICATION_NAME, service, account);
+  }
+
+  async delete(service: string, account: string): Promise<void> {
+    await this.clear(KEYCHAIN_APPLICATION_NAME, service, account);
+  }
+
+  private async lookup(
+    application: string,
+    service: string,
+    account: string,
+  ): Promise<string | null> {
     const result = await this.runCommand("secret-tool", [
       "lookup",
       "application",
-      "d-env",
+      application,
       "service",
       service,
       "account",
@@ -263,11 +279,15 @@ export class SecretToolKeychainAdapter implements KeychainAdapter {
     throw commandFailure("secret-tool", result);
   }
 
-  async delete(service: string, account: string): Promise<void> {
+  private async clear(
+    application: string,
+    service: string,
+    account: string,
+  ): Promise<void> {
     const result = await this.runCommand("secret-tool", [
       "clear",
       "application",
-      "d-env",
+      application,
       "service",
       service,
       "account",
@@ -514,7 +534,7 @@ export function createKeychainAdapter(
     case "linux":
       return new LinuxKeychainAdapter(opts);
     default:
-      throw new DEnvError(
+      throw new EnvdError(
         "keychain adapter is not supported on this platform",
         {
           code: "internal",

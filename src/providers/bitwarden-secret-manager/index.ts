@@ -1,5 +1,5 @@
 import { BitwardenClient } from "@bitwarden/sdk-napi";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import type {
   ChangeSet,
   Provider,
@@ -41,7 +41,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function validateConfig(config: unknown): BitwardenConfig {
   if (!isRecord(config)) {
-    throw new DEnvError(
+    throw new EnvdError(
       "bitwarden-secret-manager provider config must be a JSON object",
       {
         code: "usage_error",
@@ -51,7 +51,7 @@ function validateConfig(config: unknown): BitwardenConfig {
 
   const projectId = config["projectId"];
   if (typeof projectId !== "string" || projectId.trim() === "") {
-    throw new DEnvError(
+    throw new EnvdError(
       "bitwarden-secret-manager provider requires config.projectId",
       {
         code: "usage_error",
@@ -61,7 +61,7 @@ function validateConfig(config: unknown): BitwardenConfig {
 
   const apiUrl = config["apiUrl"];
   if (apiUrl !== undefined && typeof apiUrl !== "string") {
-    throw new DEnvError(
+    throw new EnvdError(
       "bitwarden-secret-manager provider config.apiUrl must be a string",
       {
         code: "usage_error",
@@ -76,7 +76,7 @@ function validateConfig(config: unknown): BitwardenConfig {
 
   const trimmedApiUrl = apiUrl.trim();
   if (trimmedApiUrl === "") {
-    throw new DEnvError(
+    throw new EnvdError(
       "bitwarden-secret-manager provider config.apiUrl must be non-empty",
       {
         code: "usage_error",
@@ -87,7 +87,7 @@ function validateConfig(config: unknown): BitwardenConfig {
   try {
     new URL(trimmedApiUrl);
   } catch (err: unknown) {
-    throw new DEnvError(
+    throw new EnvdError(
       "bitwarden-secret-manager provider config.apiUrl must be a URL",
       {
         code: "usage_error",
@@ -120,7 +120,7 @@ function deriveIdentityUrl(apiUrl: string): string {
 async function accessToken(ctx: ProviderContext): Promise<string> {
   const token = await ctx.keychain.get(PROVIDER_NAME, ACCESS_TOKEN_KEY);
   if (token === null || token.trim() === "") {
-    throw new DEnvError(
+    throw new EnvdError(
       "bitwarden-secret-manager provider requires accessToken",
       {
         code: "provider_auth",
@@ -138,7 +138,7 @@ function sdkSettings(config: BitwardenConfig) {
   return {
     apiUrl: config.apiUrl,
     identityUrl: deriveIdentityUrl(config.apiUrl),
-    userAgent: "d-env",
+    userAgent: "envd",
   };
 }
 
@@ -154,8 +154,8 @@ function maybeStatusCode(message: string): number | undefined {
   return Number.parseInt(statusText, 10);
 }
 
-function mapBitwardenError(err: unknown): DEnvError {
-  if (err instanceof DEnvError) {
+function mapBitwardenError(err: unknown): EnvdError {
+  if (err instanceof EnvdError) {
     return err;
   }
 
@@ -175,7 +175,7 @@ function mapBitwardenError(err: unknown): DEnvError {
     lower.includes("401") ||
     lower.includes("403")
   ) {
-    return new DEnvError(
+    return new EnvdError(
       message || "bitwarden-secret-manager authentication failed",
       {
         code: "provider_auth",
@@ -196,7 +196,7 @@ function mapBitwardenError(err: unknown): DEnvError {
     lower.includes("unreachable") ||
     (statusCode !== undefined && statusCode >= 500)
   ) {
-    return new DEnvError(
+    return new EnvdError(
       message || "bitwarden-secret-manager provider is unreachable",
       {
         code: "provider_unreachable",
@@ -206,7 +206,7 @@ function mapBitwardenError(err: unknown): DEnvError {
     );
   }
 
-  return new DEnvError(
+  return new EnvdError(
     message || "bitwarden-secret-manager provider request failed",
     {
       code: "provider_unreachable",
@@ -306,10 +306,10 @@ async function fetchProjectSecrets(
     }
     return projectSecrets;
   } catch (err: unknown) {
-    if (err instanceof DEnvError) {
+    if (err instanceof EnvdError) {
       throw err;
     }
-    throw new DEnvError(
+    throw new EnvdError(
       "bitwarden-secret-manager provider returned malformed data",
       {
         code: "provider_unreachable",

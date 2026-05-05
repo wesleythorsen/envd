@@ -8,10 +8,11 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
-import { DEnvError } from "../shared/errors.js";
+import { basename, join } from "node:path";
+import { EnvdError } from "../shared/errors.js";
+import { PROJECT_FILE_NAME } from "../shared/product.js";
 
-export const PROJECT_FILE = ".d-env.json";
+export const PROJECT_FILE = PROJECT_FILE_NAME;
 export const ENV_FILE = ".env";
 
 export interface ProjectFile {
@@ -19,17 +20,48 @@ export interface ProjectFile {
   readonly version: 1;
 }
 
+export interface ResolvedProjectFile {
+  readonly path: string;
+  readonly name: string;
+}
+
 export function parseProjectFile(path: string): ProjectFile {
   const raw = readFileSync(path, "utf-8");
-  // as-cast justified: .d-env.json is an external serialization boundary.
+  const projectFileName = basename(path);
+  // as-cast justified: project metadata files are an external serialization boundary.
   const parsed = JSON.parse(raw) as Record<string, unknown>;
   if (typeof parsed["projectId"] !== "string" || parsed["version"] !== 1) {
-    throw new DEnvError(".d-env.json is malformed", {
+    throw new EnvdError(`${projectFileName} is malformed`, {
       code: "usage_error",
       details: { path },
     });
   }
   return { projectId: parsed["projectId"], version: 1 };
+}
+
+export function findProjectFile(
+  projectDir: string,
+): ResolvedProjectFile | null {
+  const path = join(projectDir, PROJECT_FILE);
+  if (existsSync(path)) {
+    return { path, name: PROJECT_FILE };
+  }
+  return null;
+}
+
+export function readProjectFile(projectDir: string):
+  | (ProjectFile & {
+      readonly path: string;
+    })
+  | null {
+  const resolved = findProjectFile(projectDir);
+  if (resolved === null) {
+    return null;
+  }
+  return {
+    ...parseProjectFile(resolved.path),
+    path: resolved.path,
+  };
 }
 
 export function writeProjectFile(projectDir: string, projectId: string): void {
@@ -56,7 +88,7 @@ export function ensureGitignore(projectDir: string): void {
   }
 }
 
-export function isDEnvSymlink(path: string): boolean {
+export function isEnvdSymlink(path: string): boolean {
   try {
     const stat = lstatSync(path);
     if (!stat.isSymbolicLink()) {
@@ -74,13 +106,13 @@ export function ensureEnvSymlink(projectDir: string, target: string): void {
   try {
     const stat = lstatSync(envPath);
     if (!stat.isSymbolicLink()) {
-      throw new DEnvError(".env exists and is not a symlink", {
+      throw new EnvdError(".env exists and is not a symlink", {
         code: "usage_error",
         details: { path: envPath },
       });
     }
-    if (!isDEnvSymlink(envPath)) {
-      throw new DEnvError(".env symlink is not managed by d-env", {
+    if (!isEnvdSymlink(envPath)) {
+      throw new EnvdError(".env symlink is not managed by envd", {
         code: "usage_error",
         details: { path: envPath },
       });
@@ -99,13 +131,13 @@ export function removeEnvSymlink(projectDir: string): boolean {
   try {
     const stat = lstatSync(envPath);
     if (!stat.isSymbolicLink()) {
-      throw new DEnvError(".env exists and is not a symlink", {
+      throw new EnvdError(".env exists and is not a symlink", {
         code: "usage_error",
         details: { path: envPath },
       });
     }
-    if (!isDEnvSymlink(envPath)) {
-      throw new DEnvError(".env symlink is not managed by d-env", {
+    if (!isEnvdSymlink(envPath)) {
+      throw new EnvdError(".env symlink is not managed by envd", {
         code: "usage_error",
         details: { path: envPath },
       });

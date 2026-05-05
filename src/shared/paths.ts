@@ -1,18 +1,25 @@
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import {
+  DAEMON_LOG_FILE_NAME,
+  DEFAULT_STATE_DIR_NAME,
+  HOME_ENV_VAR,
+  MOUNT_PATH_ENV_VAR,
+  PID_FILE_NAME,
+} from "./product.js";
 
-/** Returns the d-env state directory, honoring $D_ENV_HOME. Defaults to ~/.d-env/. */
+/** Returns the envd state directory, honoring $ENVD_HOME. */
 export function stateDir(): string {
-  const override = process.env["D_ENV_HOME"];
+  const override = process.env[HOME_ENV_VAR];
   if (override !== undefined && override !== "") {
     return override;
   }
-  return join(homedir(), ".d-env");
+  return join(homedir(), DEFAULT_STATE_DIR_NAME);
 }
 
 export function pidFile(): string {
-  return join(stateDir(), "d-envd.pid");
+  return join(stateDir(), PID_FILE_NAME);
 }
 
 export function portsFile(): string {
@@ -32,18 +39,18 @@ export function logDir(): string {
 }
 
 export function daemonLogFile(): string {
-  return join(logDir(), "d-envd.log");
+  return join(logDir(), DAEMON_LOG_FILE_NAME);
 }
 
 /**
  * Returns the OS-specific WebDAV mount path.
- * $D_ENV_MOUNT_PATH overrides the default.
- * darwin → ~/.d-env/mount
- * linux  → ~/.d-env/mount
+ * $ENVD_MOUNT_PATH overrides the default.
+ * darwin → ~/.envd/mount
+ * linux  → ~/.envd/mount
  * other  → throws (unsupported platform)
  */
 export function mountPath(): string {
-  const override = process.env["D_ENV_MOUNT_PATH"];
+  const override = process.env[MOUNT_PATH_ENV_VAR];
   if (override !== undefined && override !== "") {
     return override;
   }

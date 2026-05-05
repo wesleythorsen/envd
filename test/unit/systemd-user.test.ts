@@ -78,20 +78,20 @@ describe("systemd user service helpers", () => {
     );
   });
 
-  it("builds a systemd unit that starts d-envd with node", () => {
+  it("builds a systemd unit that starts envdd with node", () => {
     expect(
       buildSystemdUserUnit({
         nodePath: "/usr/bin/node",
-        daemonPath: "/opt/d-env/dist/daemon/main.js",
+        daemonPath: "/opt/envd/dist/daemon/main.js",
       }),
     ).toBe(
       [
         "[Unit]",
-        "Description=d-env daemon",
+        "Description=envd daemon",
         "",
         "[Service]",
         "Type=simple",
-        "ExecStart=/usr/bin/node /opt/d-env/dist/daemon/main.js",
+        "ExecStart=/usr/bin/node /opt/envd/dist/daemon/main.js",
         "Restart=on-failure",
         "RestartSec=2s",
         "",
@@ -117,7 +117,7 @@ describe("systemd user service helpers", () => {
       platform: "linux",
       homeDir: "/home/alice",
       nodePath: "/usr/bin/node",
-      daemonPath: "/opt/d-env/dist/daemon/main.js",
+      daemonPath: "/opt/envd/dist/daemon/main.js",
       runSystemctl: systemctl.fn,
       mkdirFn: mkdir.fn,
       writeFileFn: write.fn,
@@ -135,7 +135,7 @@ describe("systemd user service helpers", () => {
       mode: 0o644,
     });
     expect(write.calls[0]?.data).toContain(
-      "ExecStart=/usr/bin/node /opt/d-env/dist/daemon/main.js\n",
+      "ExecStart=/usr/bin/node /opt/envd/dist/daemon/main.js\n",
     );
     expect(systemctl.calls).toEqual([
       ["daemon-reload"],
@@ -152,7 +152,7 @@ describe("systemd user service helpers", () => {
         platform: "darwin",
         daemonPath: () => {
           resolved = true;
-          return "/opt/d-env/dist/daemon/main.js";
+          return "/opt/envd/dist/daemon/main.js";
         },
       }),
     ).rejects.toMatchObject({
@@ -203,7 +203,7 @@ describe("systemd user service helpers", () => {
     expect(systemctl.calls).toEqual([]);
   });
 
-  it("raises a DEnvError when systemctl fails", async () => {
+  it("raises a EnvdError when systemctl fails", async () => {
     const systemctl: SystemdRunner = (args) => {
       if (args[0] === "enable") {
         return Promise.resolve(fail(1, "no user bus"));
@@ -216,7 +216,7 @@ describe("systemd user service helpers", () => {
         platform: "linux",
         homeDir: "/home/alice",
         nodePath: "/usr/bin/node",
-        daemonPath: "/opt/d-env/dist/daemon/main.js",
+        daemonPath: "/opt/envd/dist/daemon/main.js",
         runSystemctl: systemctl,
         mkdirFn: makeMkdir().fn,
         writeFileFn: makeWriteFile().fn,

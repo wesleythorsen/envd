@@ -15,7 +15,7 @@ export const ERROR_CODES = [
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
-export class DEnvError extends Error {
+export class EnvdError extends Error {
   readonly code: ErrorCode;
   readonly details?: Record<string, unknown>;
 
@@ -28,7 +28,7 @@ export class DEnvError extends Error {
     },
   ) {
     super(message, { cause: opts.cause });
-    this.name = "DEnvError";
+    this.name = "EnvdError";
     this.code = opts.code;
     if (opts.details !== undefined) {
       this.details = opts.details;

@@ -1,5 +1,5 @@
 {
-  "name": "d-env",
+  "name": "envd",
   "version": "1.0.0",
   "description": "",
   "type": "module",
@@ -43,8 +43,8 @@
     "vitest": "^4.1.5"
   },
   "bin": {
-    "d-env": "dist/cli/main.js",
-    "d-envd": "dist/daemon/main.js"
+    "envd": "dist/cli/main.js",
+    "envdd": "dist/daemon/main.js"
   },
   "files": [
     "dist"

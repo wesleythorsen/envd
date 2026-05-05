@@ -1,27 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { DEnvError, type ErrorCode } from "../../src/shared/errors.js";
+import { EnvdError, type ErrorCode } from "../../src/shared/errors.js";
 
-describe("DEnvError", () => {
+describe("EnvdError", () => {
   it("extends Error", () => {
-    const err = new DEnvError("something went wrong", { code: "internal" });
+    const err = new EnvdError("something went wrong", { code: "internal" });
     expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(DEnvError);
+    expect(err).toBeInstanceOf(EnvdError);
   });
 
-  it("sets name to DEnvError", () => {
-    const err = new DEnvError("msg", { code: "internal" });
-    expect(err.name).toBe("DEnvError");
+  it("sets name to EnvdError", () => {
+    const err = new EnvdError("msg", { code: "internal" });
+    expect(err.name).toBe("EnvdError");
   });
 
   it("carries the error code", () => {
-    const err = new DEnvError("daemon not running", {
+    const err = new EnvdError("daemon not running", {
       code: "daemon_unreachable",
     });
     expect(err.code).toBe("daemon_unreachable");
   });
 
   it("carries optional details", () => {
-    const err = new DEnvError("auth failed", {
+    const err = new EnvdError("auth failed", {
       code: "provider_auth",
       details: { provider: "doppler", statusCode: 401 },
     });
@@ -29,13 +29,13 @@ describe("DEnvError", () => {
   });
 
   it("details is undefined when not provided", () => {
-    const err = new DEnvError("oops", { code: "internal" });
+    const err = new EnvdError("oops", { code: "internal" });
     expect(err.details).toBeUndefined();
   });
 
   it("supports cause option (Error#cause round-trip)", () => {
     const cause = new Error("original");
-    const err = new DEnvError("wrapped", { code: "internal", cause });
+    const err = new EnvdError("wrapped", { code: "internal", cause });
     expect(err.cause).toBe(cause);
   });
 
@@ -43,20 +43,20 @@ describe("DEnvError", () => {
     const cause = new TypeError("bad type");
     let caught: unknown;
     try {
-      throw new DEnvError("mount failed", {
+      throw new EnvdError("mount failed", {
         code: "mount_failed",
-        details: { path: "/Volumes/d-env", attempt: 2 },
+        details: { path: "/Volumes/envd", attempt: 2 },
         cause,
       });
     } catch (e) {
       caught = e;
     }
 
-    expect(caught).toBeInstanceOf(DEnvError);
-    const err = caught as DEnvError;
+    expect(caught).toBeInstanceOf(EnvdError);
+    const err = caught as EnvdError;
     expect(err.message).toBe("mount failed");
     expect(err.code).toBe("mount_failed");
-    expect(err.details).toEqual({ path: "/Volumes/d-env", attempt: 2 });
+    expect(err.details).toEqual({ path: "/Volumes/envd", attempt: 2 });
     expect(err.cause).toBe(cause);
   });
 
@@ -74,7 +74,7 @@ describe("DEnvError", () => {
       "unauthorized",
     ];
     for (const code of codes) {
-      const err = new DEnvError("test", { code });
+      const err = new EnvdError("test", { code });
       expect(err.code).toBe(code);
     }
   });

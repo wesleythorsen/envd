@@ -26,10 +26,10 @@ describe("darwin mount adapter (integration)", () => {
       // Note: /Volumes requires root to mkdir; we use /private/tmp instead,
       // which mount_webdav accepts just fine on macOS.
       const rand = Math.random().toString(36).slice(2, 8);
-      const mountPath = `/private/tmp/d-env-it-${process.pid}-${rand}`;
-      const statePath = `/private/tmp/d-env-it-${process.pid}-${rand}.db`;
-      const projectPath = `/private/tmp/d-env-it-${process.pid}-${rand}-project`;
-      const providerPath = `/private/tmp/d-env-it-${process.pid}-${rand}-secrets.json`;
+      const mountPath = `/private/tmp/envd-it-${process.pid}-${rand}`;
+      const statePath = `/private/tmp/envd-it-${process.pid}-${rand}.db`;
+      const projectPath = `/private/tmp/envd-it-${process.pid}-${rand}-project`;
+      const providerPath = `/private/tmp/envd-it-${process.pid}-${rand}-secrets.json`;
       await mkdir(projectPath);
       await writeFile(
         providerPath,

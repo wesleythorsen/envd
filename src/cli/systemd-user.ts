@@ -2,9 +2,10 @@ import { execFile as nodeExecFile } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { DEnvError } from "../shared/errors.js";
+import { EnvdError } from "../shared/errors.js";
+import { SYSTEMD_USER_SERVICE_NAME } from "../shared/product.js";
 
-export const SYSTEMD_USER_SERVICE_NAME = "d-envd.service";
+export { SYSTEMD_USER_SERVICE_NAME };
 
 export interface RunResult {
   readonly stdout: string;
@@ -48,8 +49,7 @@ export interface SystemdUserServiceResult {
 
 type DaemonPathResolver = string | (() => string);
 
-export interface InstallSystemdUserServiceOptions
-  extends SystemdUserServiceDeps {
+export interface InstallSystemdUserServiceOptions extends SystemdUserServiceDeps {
   readonly daemonPath: DaemonPathResolver;
 }
 
@@ -91,7 +91,7 @@ export function systemdUserServicePath(homeDir = homedir()): string {
 
 function assertLinux(platform: NodeJS.Platform): void {
   if (platform !== "linux") {
-    throw new DEnvError(
+    throw new EnvdError(
       "systemd --user daemon install is only supported on linux",
       {
         code: "usage_error",
@@ -124,7 +124,7 @@ export function buildSystemdUserUnit(opts: {
 
   return [
     "[Unit]",
-    "Description=d-env daemon",
+    "Description=envd daemon",
     "",
     "[Service]",
     "Type=simple",
@@ -149,7 +149,7 @@ async function runSystemctlChecked(
 
   const detail =
     result.stderr.trim() || result.stdout.trim() || `exit code ${result.code}`;
-  throw new DEnvError(`systemctl --user ${args.join(" ")} failed: ${detail}`, {
+  throw new EnvdError(`systemctl --user ${args.join(" ")} failed: ${detail}`, {
     code: "internal",
     details: {
       command: "systemctl",
@@ -159,6 +159,20 @@ async function runSystemctlChecked(
       stdout: result.stdout,
     },
   });
+}
+
+async function uninstallExistingService(
+  runSystemctl: SystemdRunner,
+  unitPath: string,
+  removeFn: RemoveFn,
+): Promise<void> {
+  await runSystemctlChecked(runSystemctl, [
+    "disable",
+    SYSTEMD_USER_SERVICE_NAME,
+  ]);
+  await runSystemctlChecked(runSystemctl, ["stop", SYSTEMD_USER_SERVICE_NAME]);
+  await removeFn(unitPath, { force: true });
+  await runSystemctlChecked(runSystemctl, ["daemon-reload"]);
 }
 
 function resolveDaemonPath(path: DaemonPathResolver): string {
@@ -207,14 +221,7 @@ export async function uninstallSystemdUserService(
   const unitPath = systemdUserServicePath(homeDir);
   const removeFn = opts.removeFn ?? rm;
   const runSystemctl = opts.runSystemctl ?? defaultSystemctlRunner;
-
-  await runSystemctlChecked(runSystemctl, [
-    "disable",
-    SYSTEMD_USER_SERVICE_NAME,
-  ]);
-  await runSystemctlChecked(runSystemctl, ["stop", SYSTEMD_USER_SERVICE_NAME]);
-  await removeFn(unitPath, { force: true });
-  await runSystemctlChecked(runSystemctl, ["daemon-reload"]);
+  await uninstallExistingService(runSystemctl, unitPath, removeFn);
 
   return {
     status: "uninstalled",

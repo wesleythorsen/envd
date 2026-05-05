@@ -1,4 +1,4 @@
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import type {
   ChangeSet,
   Provider,
@@ -24,28 +24,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function validateConfig(config: unknown): DopplerConfig {
   if (!isRecord(config)) {
-    throw new DEnvError("doppler provider config must be a JSON object", {
+    throw new EnvdError("doppler provider config must be a JSON object", {
       code: "usage_error",
     });
   }
 
   const project = config["project"];
   if (typeof project !== "string" || project.trim() === "") {
-    throw new DEnvError("doppler provider requires config.project", {
+    throw new EnvdError("doppler provider requires config.project", {
       code: "usage_error",
     });
   }
 
   const dopplerConfig = config["config"];
   if (typeof dopplerConfig !== "string" || dopplerConfig.trim() === "") {
-    throw new DEnvError("doppler provider requires config.config", {
+    throw new EnvdError("doppler provider requires config.config", {
       code: "usage_error",
     });
   }
 
   const apiHost = config["apiHost"];
   if (apiHost !== undefined && typeof apiHost !== "string") {
-    throw new DEnvError("doppler provider config.apiHost must be a string", {
+    throw new EnvdError("doppler provider config.apiHost must be a string", {
       code: "usage_error",
     });
   }
@@ -58,7 +58,7 @@ function validateConfig(config: unknown): DopplerConfig {
   if (apiHost !== undefined) {
     const trimmedApiHost = apiHost.trim();
     if (trimmedApiHost === "") {
-      throw new DEnvError("doppler provider config.apiHost must be non-empty", {
+      throw new EnvdError("doppler provider config.apiHost must be non-empty", {
         code: "usage_error",
       });
     }
@@ -66,7 +66,7 @@ function validateConfig(config: unknown): DopplerConfig {
     try {
       new URL(trimmedApiHost);
     } catch (err: unknown) {
-      throw new DEnvError("doppler provider config.apiHost must be a URL", {
+      throw new EnvdError("doppler provider config.apiHost must be a URL", {
         code: "usage_error",
         cause: err,
       });
@@ -114,9 +114,9 @@ function statusDetails(response: Response): Record<string, unknown> {
   return { provider: PROVIDER_NAME, statusCode: response.status };
 }
 
-function httpError(response: Response): DEnvError {
+function httpError(response: Response): EnvdError {
   if (response.status === 401 || response.status === 403) {
-    return new DEnvError("doppler provider authentication failed", {
+    return new EnvdError("doppler provider authentication failed", {
       code: "provider_auth",
       details: statusDetails(response),
     });
@@ -128,13 +128,13 @@ function httpError(response: Response): DEnvError {
     if (retryAfter !== null) {
       details["retryAfter"] = retryAfter;
     }
-    return new DEnvError("doppler provider rate limit exceeded", {
+    return new EnvdError("doppler provider rate limit exceeded", {
       code: "provider_unreachable",
       details,
     });
   }
 
-  return new DEnvError("doppler provider request failed", {
+  return new EnvdError("doppler provider request failed", {
     code: "provider_unreachable",
     details: statusDetails(response),
   });
@@ -159,7 +159,7 @@ function parseSecretMap(raw: string): SecretMap {
   try {
     return toSecretMap(JSON.parse(raw) as unknown);
   } catch (err: unknown) {
-    throw new DEnvError("doppler provider returned invalid JSON", {
+    throw new EnvdError("doppler provider returned invalid JSON", {
       code: "provider_unreachable",
       details: { provider: PROVIDER_NAME },
       cause: err,
@@ -170,7 +170,7 @@ function parseSecretMap(raw: string): SecretMap {
 async function apiToken(ctx: ProviderContext): Promise<string> {
   const token = await ctx.keychain.get(PROVIDER_NAME, API_TOKEN_KEY);
   if (token === null || token.trim() === "") {
-    throw new DEnvError("doppler provider requires apiToken", {
+    throw new EnvdError("doppler provider requires apiToken", {
       code: "provider_auth",
       details: { provider: PROVIDER_NAME, credential: API_TOKEN_KEY },
     });
@@ -197,7 +197,7 @@ async function fetchSecrets(
       },
     });
   } catch (err: unknown) {
-    throw new DEnvError("doppler provider is unreachable", {
+    throw new EnvdError("doppler provider is unreachable", {
       code: "provider_unreachable",
       details: { provider: PROVIDER_NAME },
       cause: err,
@@ -212,7 +212,7 @@ async function fetchSecrets(
   try {
     raw = await response.text();
   } catch (err: unknown) {
-    throw new DEnvError("doppler provider response could not be read", {
+    throw new EnvdError("doppler provider response could not be read", {
       code: "provider_unreachable",
       details: { provider: PROVIDER_NAME },
       cause: err,
@@ -246,7 +246,7 @@ async function testAuth(
         },
       });
     } catch (err: unknown) {
-      throw new DEnvError("doppler provider is unreachable", {
+      throw new EnvdError("doppler provider is unreachable", {
         code: "provider_unreachable",
         details: { provider: PROVIDER_NAME },
         cause: err,
@@ -285,7 +285,7 @@ async function updateSecrets(
       }),
     });
   } catch (err: unknown) {
-    throw new DEnvError("doppler provider is unreachable", {
+    throw new EnvdError("doppler provider is unreachable", {
       code: "provider_unreachable",
       details: { provider: PROVIDER_NAME },
       cause: err,
@@ -313,7 +313,7 @@ async function deleteSecret(
       },
     });
   } catch (err: unknown) {
-    throw new DEnvError("doppler provider is unreachable", {
+    throw new EnvdError("doppler provider is unreachable", {
       code: "provider_unreachable",
       details: { provider: PROVIDER_NAME },
       cause: err,

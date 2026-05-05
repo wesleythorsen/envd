@@ -2,7 +2,7 @@
  * Integration test: daemon lifecycle commands
  *
  * Requires a fully-built dist/ (npm run build). Skipped on win32.
- * Isolates from the real ~/.d-env by setting D_ENV_HOME to a per-test tmpdir.
+ * Isolates from the real ~/.envd by setting ENVD_HOME to a per-test tmpdir.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -45,8 +45,8 @@ describe.skipIf(isWin32)("daemon lifecycle integration", () => {
           `Expected: ${cliPath}`,
       );
     }
-    tmpHome = mkdtempSync(join(tmpdir(), "d-env-lifecycle-test-"));
-    env = { D_ENV_HOME: tmpHome };
+    tmpHome = mkdtempSync(join(tmpdir(), "envd-lifecycle-test-"));
+    env = { ENVD_HOME: tmpHome };
   });
 
   afterAll(() => {
@@ -94,7 +94,7 @@ describe.skipIf(isWin32)("daemon lifecycle integration", () => {
   it("daemon logs returns recent startup output", () => {
     const result = cliCommand(["daemon", "logs", "--tail", "20"], env);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("d-envd starting");
+    expect(result.stdout).toContain("envdd starting");
     expect(result.stdout).toContain('"scope":"daemon"');
   });
 

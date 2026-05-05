@@ -51,7 +51,7 @@ export interface ProviderContext {
 - Providers must be **pure** w.r.t. their inputs (same `fetch()` → same value if remote unchanged). No hidden per-process caches; the daemon manages caching outside the provider.
 - `fetch()` must error, not return empty, on auth failures. The distinction between "no secrets defined" and "can't reach provider" must be preserved.
 - `push()` must be atomic *per call* where the backend supports it; where it doesn't (e.g. AWS Secrets Manager with one secret per key), the provider is responsible for best-effort ordering and returning a meaningful `PushResult` on partial failure.
-- `test()` must be idempotent and cheap. It's called from `d-env provider test` and during config creation.
+- `test()` must be idempotent and cheap. It's called from `envd provider test` and during config creation.
 - Provider code must not depend on `fs` or a specific Node globals beyond `ProviderContext`. That keeps them trivially unit-testable.
 
 ### Registering a provider
@@ -62,7 +62,7 @@ export interface ProviderContext {
 
 ### Adding our own provider later
 
-Our hypothetical self-hosted provider will be just another provider implementation. No special status. The only nuance: it'll ship as part of this repo (or a sibling package), and we may want the daemon to optionally *host* a local instance of it too. That host is a separate concern and can be a sibling binary (`d-env-store` or similar).
+Our hypothetical self-hosted provider will be just another provider implementation. No special status. The only nuance: it'll ship as part of this repo (or a sibling package), and we may want the daemon to optionally *host* a local instance of it too. That host is a separate concern and can be a sibling binary (`envd-store` or similar).
 
 ## 2. Data kinds
 
@@ -105,9 +105,9 @@ Future formats for the same kind:
 - `json` — secrets as a flat JSON object (for JS apps that read config.json).
 - `yaml` — same, YAML.
 - `shell` — `export KEY=VALUE` lines.
-- `systemd-env` — systemd's stricter env format.
+- `systemenvd` — systemd's stricter env format.
 
-Format config lives in the project's `.d-env.json`:
+Format config lives in the project's `.envd.json`:
 
 ```json
 {
@@ -156,6 +156,6 @@ These surfaces are considered API and must not break without a major-version bum
 - `Provider`, `ProviderInstance`, `DataKind`, `MountAdapter` interfaces.
 - Control API `/v1/*` shapes (paths, request/response bodies, error codes).
 - CLI command names and flags (deprecation requires a one-minor-version warning period).
-- On-disk files: `.d-env.json` in projects, `~/.d-env/state.db` schema (migrations required for changes).
+- On-disk files: `.envd.json` in projects, `~/.envd/state.db` schema (migrations required for changes).
 
 Anything in `src/internal/` or without a doc entry is not stable.

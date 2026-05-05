@@ -76,15 +76,15 @@ describe("MacOSSecurityKeychainAdapter", () => {
         command: "/bin/sh",
         args: [
           "-c",
-          'exec security add-generic-password "$@" -w "$D_ENV_SECRET"',
-          "d-env-security",
+          'exec security add-generic-password "$@" -w "$ENVD_SECRET"',
+          "envd-security",
           "-s",
           "provider-instance",
           "-a",
           "apiToken",
           "-U",
         ],
-        env: { D_ENV_SECRET: "secret-value" },
+        env: { ENVD_SECRET: "secret-value" },
       },
     ]);
     expect(calls[0]?.args).not.toContain("secret-value");
@@ -119,9 +119,9 @@ describe("SecretToolKeychainAdapter", () => {
       args: [
         "store",
         "--label",
-        "d-env svc/acct",
+        "envd svc/acct",
         "application",
-        "d-env",
+        "envd",
         "service",
         "svc",
         "account",
@@ -174,7 +174,7 @@ describe("LinuxKeychainAdapter", () => {
   });
 
   it("falls back to an encrypted file when secret-tool is missing", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "d-env-keychain-"));
+    tempDir = mkdtempSync(join(tmpdir(), "envd-keychain-"));
     const secretsFile = join(tempDir, "secrets.enc");
     const { calls, runner } = fakeRunner([missingExecutable()]);
     const adapter = new LinuxKeychainAdapter({
@@ -206,7 +206,7 @@ describe("EncryptedFileKeychainAdapter", () => {
   });
 
   it("documents the memory-only key limitation by not reading another daemon key", async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "d-env-keychain-"));
+    tempDir = mkdtempSync(join(tmpdir(), "envd-keychain-"));
     const secretsFile = join(tempDir, "secrets.enc");
     const firstDaemon = new EncryptedFileKeychainAdapter({
       logger: silentLogger,

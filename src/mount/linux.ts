@@ -2,12 +2,13 @@ import { execFile as nodeExecFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { DEnvError } from "../shared/errors.js";
+import { EnvdError } from "../shared/errors.js";
 import { createLogger } from "../shared/logger.js";
 import type { MountAdapter } from "./adapter.js";
 
 const log = createLogger("mount/linux");
-const DAVFS_INSTALL_HINT = "install davfs2 first (apt install davfs2 or dnf install davfs2)";
+const DAVFS_INSTALL_HINT =
+  "install davfs2 first (apt install davfs2 or dnf install davfs2)";
 
 export interface RunResult {
   stdout: string;
@@ -61,8 +62,8 @@ function missingDavfs(result: RunResult): boolean {
   );
 }
 
-function missingDavfsError(): DEnvError {
-  return new DEnvError(DAVFS_INSTALL_HINT, {
+function missingDavfsError(): EnvdError {
+  return new EnvdError(DAVFS_INSTALL_HINT, {
     code: "mount_failed",
   });
 }
@@ -70,8 +71,8 @@ function missingDavfsError(): DEnvError {
 function mountFailure(
   message: string,
   details: Record<string, unknown>,
-): DEnvError {
-  return new DEnvError(message, {
+): EnvdError {
+  return new EnvdError(message, {
     code: "mount_failed",
     details,
   });
@@ -147,7 +148,7 @@ export class LinuxMountAdapter implements MountAdapter {
     await this.ensureDavfsInstalled();
     await this.mkdirFn(path, { recursive: true });
 
-    const configDir = await this.mkdtempFn(join(tmpdir(), "d-env-davfs2-"));
+    const configDir = await this.mkdtempFn(join(tmpdir(), "envd-davfs2-"));
     const configPath = join(configDir, "davfs2.conf");
     await this.writeFileFn(configPath, "use_locks 0\n");
     this.configDirs.set(path, configDir);

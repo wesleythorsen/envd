@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import localFileProvider from "../../src/providers/local-file/index.js";
 import { createLogger } from "../../src/shared/logger.js";
 import type { ProviderContext } from "../../src/providers/base.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 
 function makeContext(): ProviderContext {
   return {
@@ -32,7 +32,7 @@ function makeContext(): ProviderContext {
 }
 
 function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
-  const dir = mkdtempSync(join(tmpdir(), "d-env-local-file-"));
+  const dir = mkdtempSync(join(tmpdir(), "envd-local-file-"));
   return fn(dir).finally(() => {
     rmSync(dir, { recursive: true, force: true });
   });
@@ -100,13 +100,13 @@ describe("local-file provider", () => {
       });
 
       writeFileSync(filePath, JSON.stringify({ A: 1 }), "utf-8");
-      await expect(provider.fetch()).rejects.toBeInstanceOf(DEnvError);
+      await expect(provider.fetch()).rejects.toBeInstanceOf(EnvdError);
     });
   });
 
   it("validates config shape", async () => {
     await expect(
       localFileProvider.create(makeContext(), {}),
-    ).rejects.toBeInstanceOf(DEnvError);
+    ).rejects.toBeInstanceOf(EnvdError);
   });
 });

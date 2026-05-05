@@ -1,11 +1,11 @@
-import { DEnvError } from "../shared/errors.js";
+import { EnvdError } from "../shared/errors.js";
 import type { MountAdapter } from "./adapter.js";
 
 /**
  * Returns the correct `MountAdapter` for the current platform.
  *
  * Only darwin is implemented in US-1.2. A Linux adapter is planned for US-8.3.
- * Any other platform (including Linux for now) throws a `DEnvError` with
+ * Any other platform (including Linux for now) throws a `EnvdError` with
  * `code: "mount_failed"`.
  */
 export async function createMountAdapter(): Promise<MountAdapter> {
@@ -22,7 +22,7 @@ export async function createMountAdapter(): Promise<MountAdapter> {
     return new LinuxMountAdapter();
   }
 
-  throw new DEnvError(
+  throw new EnvdError(
     `Mount adapter not implemented for platform "${platform}"`,
     {
       code: "mount_failed",

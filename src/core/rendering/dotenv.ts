@@ -1,6 +1,6 @@
 import { TextDecoder, TextEncoder } from "node:util";
 import type { SecretMap } from "../../providers/base.js";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 
 export type DotenvQuoteMode = "always" | "when-needed";
 export type DotenvSortKeys = "alphabetical" | "insertion";
@@ -23,10 +23,10 @@ const validKey = /^[A-Za-z0-9_.-]+$/u;
 
 function badDotenv(message: string, details?: Record<string, unknown>): never {
   if (details === undefined) {
-    throw new DEnvError(message, { code: "bad_dotenv" });
+    throw new EnvdError(message, { code: "bad_dotenv" });
   }
 
-  throw new DEnvError(message, { code: "bad_dotenv", details });
+  throw new EnvdError(message, { code: "bad_dotenv", details });
 }
 
 function normalizeOptions(
@@ -61,7 +61,7 @@ function decode(bytes: Uint8Array): string {
     const text = decoder.decode(bytes);
     return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   } catch (err) {
-    throw new DEnvError("dotenv bytes must be valid UTF-8", {
+    throw new EnvdError("dotenv bytes must be valid UTF-8", {
       code: "bad_dotenv",
       cause: err,
     });

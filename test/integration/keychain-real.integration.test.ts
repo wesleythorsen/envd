@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest";
 import { createKeychainAdapter } from "../../src/core/keychain.js";
 
 const runRealKeychain =
-  process.platform === "darwin" && process.env["D_ENV_TEST_KEYCHAIN"] === "1";
+  process.platform === "darwin" && process.env["ENVD_TEST_KEYCHAIN"] === "1";
 
 describe.skipIf(!runRealKeychain)("real macOS keychain adapter", () => {
   it("round-trips a credential through the OS keychain", async () => {
     const adapter = createKeychainAdapter();
-    const service = `d-env-test-${randomUUID()}`;
+    const service = `envd-test-${randomUUID()}`;
     const account = "apiToken";
 
     try {

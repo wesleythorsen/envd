@@ -8,7 +8,7 @@ import {
   createControlClient,
   type ControlClient,
 } from "../../src/ipc/control-client.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -87,7 +87,7 @@ describe("project APIs happy path", () => {
   let providerInstanceId: string;
 
   beforeAll(async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "d-env-client-projects-"));
+    tempDir = mkdtempSync(join(tmpdir(), "envd-client-projects-"));
     projectPath = join(tempDir, "project");
     providerFile = join(tempDir, "provider.json");
     mkdirSync(projectPath);
@@ -176,7 +176,7 @@ describe("provider APIs happy path", () => {
   let providerFile: string;
 
   beforeAll(async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "d-env-client-providers-"));
+    tempDir = mkdtempSync(join(tmpdir(), "envd-client-providers-"));
     providerFile = join(tempDir, "secrets.json");
     state = openState(join(tempDir, "state.db"));
     providerServer = await startControlServer({
@@ -250,34 +250,34 @@ describe("provider APIs happy path", () => {
     await expect(
       providerClient.getProviderInstance(created.id),
     ).rejects.toSatisfy((err: unknown) => {
-      return err instanceof DEnvError && err.code === "not_found";
+      return err instanceof EnvdError && err.code === "not_found";
     });
   });
 });
 
 // ---------------------------------------------------------------------------
-// Wrong token → DEnvError { code: "unauthorized" }
+// Wrong token → EnvdError { code: "unauthorized" }
 // ---------------------------------------------------------------------------
 
 describe("wrong token", () => {
-  it("throws DEnvError with code=unauthorized", async () => {
+  it("throws EnvdError with code=unauthorized", async () => {
     const badClient = createControlClient({
       baseUrl: `http://127.0.0.1:${server.port}`,
       token: WRONG_TOKEN,
     });
 
     await expect(badClient.health()).rejects.toSatisfy((err: unknown) => {
-      return err instanceof DEnvError && err.code === "unauthorized";
+      return err instanceof EnvdError && err.code === "unauthorized";
     });
   });
 });
 
 // ---------------------------------------------------------------------------
-// Server not running → DEnvError { code: "daemon_unreachable" }
+// Server not running → EnvdError { code: "daemon_unreachable" }
 // ---------------------------------------------------------------------------
 
 describe("server not running", () => {
-  it("throws DEnvError with code=daemon_unreachable on connection refused", async () => {
+  it("throws EnvdError with code=daemon_unreachable on connection refused", async () => {
     // Port 19109 is in the high dynamic range; nothing should be listening there.
     // We pick a fixed high port rather than allocating a real one because we
     // want a genuine ECONNREFUSED from the OS, not a "bad port" validation error.
@@ -287,13 +287,13 @@ describe("server not running", () => {
     });
 
     await expect(downClient.health()).rejects.toSatisfy((err: unknown) => {
-      return err instanceof DEnvError && err.code === "daemon_unreachable";
+      return err instanceof EnvdError && err.code === "daemon_unreachable";
     });
   });
 });
 
 // ---------------------------------------------------------------------------
-// Timeout → DEnvError { code: "daemon_unreachable", message: "timeout" }
+// Timeout → EnvdError { code: "daemon_unreachable", message: "timeout" }
 // ---------------------------------------------------------------------------
 
 describe("timeout", () => {
@@ -322,7 +322,7 @@ describe("timeout", () => {
     });
   });
 
-  it("throws DEnvError with code=daemon_unreachable and message=timeout", async () => {
+  it("throws EnvdError with code=daemon_unreachable and message=timeout", async () => {
     const timeoutClient = createControlClient({
       baseUrl: `http://127.0.0.1:${slowPort}`,
       token: TOKEN,
@@ -331,7 +331,7 @@ describe("timeout", () => {
 
     await expect(timeoutClient.health()).rejects.toSatisfy((err: unknown) => {
       return (
-        err instanceof DEnvError &&
+        err instanceof EnvdError &&
         err.code === "daemon_unreachable" &&
         err.message === "timeout"
       );
@@ -345,40 +345,40 @@ describe("timeout", () => {
 
 describe("missing ports file / token file", () => {
   it("throws daemon_unreachable when neither baseUrl nor ports file exist", () => {
-    // D_ENV_HOME points to a directory that has no ports.json
-    const origHome = process.env["D_ENV_HOME"];
-    process.env["D_ENV_HOME"] = "/tmp/d-env-nonexistent-" + Date.now();
+    // ENVD_HOME points to a directory that has no ports.json
+    const origHome = process.env["ENVD_HOME"];
+    process.env["ENVD_HOME"] = "/tmp/envd-nonexistent-" + Date.now();
     try {
-      expect(() => createControlClient()).toThrow(DEnvError);
+      expect(() => createControlClient()).toThrow(EnvdError);
       expect(() => createControlClient()).toSatisfy((fn: () => void) => {
         try {
           fn();
           return false;
         } catch (err) {
-          return err instanceof DEnvError && err.code === "daemon_unreachable";
+          return err instanceof EnvdError && err.code === "daemon_unreachable";
         }
       });
     } finally {
       if (origHome === undefined) {
-        delete process.env["D_ENV_HOME"];
+        delete process.env["ENVD_HOME"];
       } else {
-        process.env["D_ENV_HOME"] = origHome;
+        process.env["ENVD_HOME"] = origHome;
       }
     }
   });
 
   it("throws daemon_unreachable when baseUrl is given but token file is missing", () => {
-    const origHome = process.env["D_ENV_HOME"];
-    process.env["D_ENV_HOME"] = "/tmp/d-env-nonexistent-" + Date.now();
+    const origHome = process.env["ENVD_HOME"];
+    process.env["ENVD_HOME"] = "/tmp/envd-nonexistent-" + Date.now();
     try {
       expect(() =>
         createControlClient({ baseUrl: "http://127.0.0.1:1910" }),
-      ).toThrow(DEnvError);
+      ).toThrow(EnvdError);
     } finally {
       if (origHome === undefined) {
-        delete process.env["D_ENV_HOME"];
+        delete process.env["ENVD_HOME"];
       } else {
-        process.env["D_ENV_HOME"] = origHome;
+        process.env["ENVD_HOME"] = origHome;
       }
     }
   });

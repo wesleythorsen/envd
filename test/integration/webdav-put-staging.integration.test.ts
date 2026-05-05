@@ -40,7 +40,7 @@ const noopKeychain: KeychainAdapter = {
 async function withWebdavStaging(
   fn: (fixture: WebdavStagingFixture) => Promise<void>,
 ): Promise<void> {
-  const tempDir = mkdtempSync(join(tmpdir(), "d-env-webdav-put-staging-"));
+  const tempDir = mkdtempSync(join(tmpdir(), "envd-webdav-put-staging-"));
   const projectDir = join(tempDir, "project");
   mkdirSync(projectDir);
 
@@ -136,7 +136,7 @@ describe("WebDAV PUT staging integration", () => {
         body: "BROKEN\n",
       });
       expect(bad.statusCode).toBe(400);
-      expect(bad.headers["x-denv-error"]).toBe("bad_dotenv");
+      expect(bad.headers["x-envd-error"]).toBe("bad_dotenv");
       await bad.body.dump();
 
       const row = readStagingRow(state, project.id);
@@ -146,7 +146,7 @@ describe("WebDAV PUT staging integration", () => {
   });
 
   it("renders staged edits over a cached local-file provider snapshot", async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), "d-env-webdav-get-staging-"));
+    const tempDir = mkdtempSync(join(tmpdir(), "envd-webdav-get-staging-"));
     const projectDir = join(tempDir, "project");
     const providerFile = join(tempDir, "secrets.json");
     mkdirSync(projectDir);

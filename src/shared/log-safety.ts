@@ -1,10 +1,10 @@
-import { DEnvError } from "./errors.js";
+import { EnvdError } from "./errors.js";
 import type { LogData } from "./logger.js";
 
 export function safeErrorLogData(err: unknown): LogData {
-  if (err instanceof DEnvError) {
+  if (err instanceof EnvdError) {
     return {
-      errorType: "DEnvError",
+      errorType: "EnvdError",
       errorCode: err.code,
     };
   }

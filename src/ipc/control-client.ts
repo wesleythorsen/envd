@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fetch } from "undici";
-import { DEnvError } from "../shared/errors.js";
+import { EnvdError } from "../shared/errors.js";
 import * as paths from "../shared/paths.js";
 import type { ChangeSet } from "../providers/base.js";
 import type { JSONSchema } from "../providers/base.js";
@@ -81,14 +81,12 @@ export interface ProjectStatusDetail {
   readonly providerHealthy: boolean | null;
   readonly providerError: string | null;
   readonly lastFetchTime: number | null;
-  readonly staging:
-    | {
-        readonly added: number;
-        readonly modified: number;
-        readonly deleted: number;
-        readonly total: number;
-      }
-    | null;
+  readonly staging: {
+    readonly added: number;
+    readonly modified: number;
+    readonly deleted: number;
+    readonly total: number;
+  } | null;
 }
 
 export interface ProjectDiffOptions {
@@ -177,7 +175,7 @@ function resolveBaseUrl(opts: ControlClientOpts): string {
     raw = readFileSync(portsPath, "utf-8");
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new DEnvError("daemon is not running (no ports file)", {
+      throw new EnvdError("daemon is not running (no ports file)", {
         code: "daemon_unreachable",
         cause: err,
       });
@@ -189,7 +187,7 @@ function resolveBaseUrl(opts: ControlClientOpts): string {
   const parsed = JSON.parse(raw) as Record<string, unknown>;
   const controlPort = parsed["control"];
   if (typeof controlPort !== "number") {
-    throw new DEnvError(
+    throw new EnvdError(
       "ports file is malformed (missing numeric 'control' field)",
       { code: "daemon_unreachable" },
     );
@@ -207,7 +205,7 @@ function resolveToken(opts: ControlClientOpts): string {
     return readFileSync(tokenPath, "utf-8").trim();
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new DEnvError("control token missing", {
+      throw new EnvdError("control token missing", {
         code: "daemon_unreachable",
         cause: err,
       });
@@ -239,7 +237,9 @@ function isConnRefused(err: unknown): boolean {
   return false;
 }
 
-function parseErrorDetails(value: unknown): Record<string, unknown> | undefined {
+function parseErrorDetails(
+  value: unknown,
+): Record<string, unknown> | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
@@ -252,9 +252,9 @@ function throwApiError(
   details?: Record<string, unknown>,
 ): never {
   if (details === undefined) {
-    throw new DEnvError(message, { code });
+    throw new EnvdError(message, { code });
   }
-  throw new DEnvError(message, { code, details });
+  throw new EnvdError(message, { code, details });
 }
 
 /**
@@ -282,14 +282,14 @@ async function apiGet<T>(
   } catch (err: unknown) {
     // AbortController fired → timeout
     if (err instanceof Error && err.name === "AbortError") {
-      throw new DEnvError("timeout", {
+      throw new EnvdError("timeout", {
         code: "daemon_unreachable",
         cause: err,
       });
     }
     // Network-level failure
     if (isConnRefused(err)) {
-      throw new DEnvError("daemon is not running (connection refused)", {
+      throw new EnvdError("daemon is not running (connection refused)", {
         code: "daemon_unreachable",
         cause: err,
       });
@@ -319,9 +319,11 @@ async function apiGet<T>(
     typeof errBody === "object" &&
     errBody !== null &&
     "error" in errBody
-      ? (errBody as {
-          error: { code?: unknown; message?: unknown; details?: unknown };
-        }).error
+      ? (
+          errBody as {
+            error: { code?: unknown; message?: unknown; details?: unknown };
+          }
+        ).error
       : undefined;
 
   const code = typeof errObj?.code === "string" ? errObj.code : undefined;
@@ -332,7 +334,7 @@ async function apiGet<T>(
   const details = parseErrorDetails(errObj?.details);
 
   if (response.status === 401) {
-    throw new DEnvError(msg, { code: "unauthorized" });
+    throw new EnvdError(msg, { code: "unauthorized" });
   }
 
   // Best-effort: use the server's error code if it's a known ErrorCode,
@@ -383,7 +385,7 @@ async function apiPost(
     });
   } catch (err: unknown) {
     if (err instanceof Error && err.name === "AbortError") {
-      throw new DEnvError("timeout", {
+      throw new EnvdError("timeout", {
         code: "daemon_unreachable",
         cause: err,
       });
@@ -392,7 +394,7 @@ async function apiPost(
       if (treatConnRefusedAsSuccess) {
         return; // Expected: daemon closed socket as part of shutdown.
       }
-      throw new DEnvError("daemon is not running (connection refused)", {
+      throw new EnvdError("daemon is not running (connection refused)", {
         code: "daemon_unreachable",
         cause: err,
       });
@@ -416,9 +418,11 @@ async function apiPost(
 
   const errObj =
     errBody !== null && typeof errBody === "object" && "error" in errBody
-      ? (errBody as {
-          error: { code?: unknown; message?: unknown; details?: unknown };
-        }).error
+      ? (
+          errBody as {
+            error: { code?: unknown; message?: unknown; details?: unknown };
+          }
+        ).error
       : undefined;
 
   const code = typeof errObj?.code === "string" ? errObj.code : undefined;
@@ -429,7 +433,7 @@ async function apiPost(
   const details = parseErrorDetails(errObj?.details);
 
   if (response.status === 401) {
-    throw new DEnvError(msg, { code: "unauthorized" });
+    throw new EnvdError(msg, { code: "unauthorized" });
   }
 
   const isKnownCode =
@@ -477,13 +481,13 @@ async function apiPostJson<T>(
     });
   } catch (err: unknown) {
     if (err instanceof Error && err.name === "AbortError") {
-      throw new DEnvError("timeout", {
+      throw new EnvdError("timeout", {
         code: "daemon_unreachable",
         cause: err,
       });
     }
     if (isConnRefused(err)) {
-      throw new DEnvError("daemon is not running (connection refused)", {
+      throw new EnvdError("daemon is not running (connection refused)", {
         code: "daemon_unreachable",
         cause: err,
       });
@@ -506,9 +510,11 @@ async function apiPostJson<T>(
 
   const errObj =
     errBody !== null && typeof errBody === "object" && "error" in errBody
-      ? (errBody as {
-          error: { code?: unknown; message?: unknown; details?: unknown };
-        }).error
+      ? (
+          errBody as {
+            error: { code?: unknown; message?: unknown; details?: unknown };
+          }
+        ).error
       : undefined;
 
   const code = typeof errObj?.code === "string" ? errObj.code : undefined;
@@ -558,13 +564,13 @@ async function apiDelete(
     });
   } catch (err: unknown) {
     if (err instanceof Error && err.name === "AbortError") {
-      throw new DEnvError("timeout", {
+      throw new EnvdError("timeout", {
         code: "daemon_unreachable",
         cause: err,
       });
     }
     if (isConnRefused(err)) {
-      throw new DEnvError("daemon is not running (connection refused)", {
+      throw new EnvdError("daemon is not running (connection refused)", {
         code: "daemon_unreachable",
         cause: err,
       });
@@ -587,9 +593,11 @@ async function apiDelete(
 
   const errObj =
     errBody !== null && typeof errBody === "object" && "error" in errBody
-      ? (errBody as {
-          error: { code?: unknown; message?: unknown; details?: unknown };
-        }).error
+      ? (
+          errBody as {
+            error: { code?: unknown; message?: unknown; details?: unknown };
+          }
+        ).error
       : undefined;
 
   const code = typeof errObj?.code === "string" ? errObj.code : undefined;

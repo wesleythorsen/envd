@@ -1,6 +1,6 @@
-# d-env — project docs
+# envd — project docs
 
-`d-env` is a developer tool that replaces static `.env` files with a **dynamic, WebDAV-backed virtual file**. The real secrets live in a pluggable backend (Doppler, AWS Secrets Manager, a self-hosted store, …). The developer's project sees a normal `.env` file.
+`envd` is a developer tool that replaces static `.env` files with a **dynamic, WebDAV-backed virtual file**. The real secrets live in a pluggable backend (Doppler, AWS Secrets Manager, a self-hosted store, …). The developer's project sees a normal `.env` file.
 
 ## Reading order for a new contributor / LLM session
 
@@ -18,7 +18,7 @@
 ## Project quick facts
 
 - **Language**: TypeScript, Node >= 24, ESM.
-- **Shape**: monorepo-free single package with two binaries (`d-env` CLI + `d-envd` daemon) and a shared core library.
+- **Shape**: monorepo-free single package with two binaries (`envd` CLI + `envdd` daemon) and a shared core library.
 - **Primary use case (v1)**: dynamic `.env` for secrets, powered by a pluggable provider backend.
 - **Designed for extension**: additional data types (configs, feature flags), additional providers (incl. a future self-hosted one).
 - **Target platforms**: macOS and Linux first (WebDAV mount is native on both). Windows later.

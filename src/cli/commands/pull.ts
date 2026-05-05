@@ -1,16 +1,15 @@
 import { Command } from "commander";
 import { stdout as defaultStdout } from "node:process";
-import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import type {
   ControlClient,
   ProjectDiffResult,
 } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 import { writeCliError } from "../error-output.js";
 import { formatDiff } from "./diff.js";
-import { PROJECT_FILE, parseProjectFile } from "../project-files.js";
+import { readProjectFile } from "../project-files.js";
 
 interface Writable {
   readonly isTTY?: boolean;
@@ -55,15 +54,15 @@ function out(deps: PullCommandDeps, text: string): void {
 
 function resolveProjectId(projectPath: string | undefined): string {
   const projectDir = resolve(projectPath ?? process.cwd());
-  const projectFilePath = join(projectDir, PROJECT_FILE);
-  if (!existsSync(projectFilePath)) {
-    throw new DEnvError("project is not initialized", {
+  const projectFile = readProjectFile(projectDir);
+  if (projectFile === null) {
+    throw new EnvdError("project is not initialized", {
       code: "not_initialized",
       details: { path: projectDir },
     });
   }
 
-  return parseProjectFile(projectFilePath).projectId;
+  return projectFile.projectId;
 }
 
 function hasDiff(diff: ProjectDiffResult): boolean {
@@ -115,7 +114,7 @@ function printHumanResult(result: PullResult, deps: PullCommandDeps): void {
     return;
   }
 
-  out(deps, `d-env pulled (snapshot fetched at ${result.snapshotFetchedAt})\n`);
+  out(deps, `envd pulled (snapshot fetched at ${result.snapshotFetchedAt})\n`);
 }
 
 function handlePullError(errValue: unknown, deps: PullCommandDeps): void {

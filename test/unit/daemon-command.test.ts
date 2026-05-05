@@ -1,9 +1,4 @@
-import {
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -37,17 +32,17 @@ async function loadDaemonModule(): Promise<
 }
 
 function withTempState(fn: () => Promise<void>): Promise<void> {
-  const home = mkdtempSync(join(tmpdir(), "d-env-daemon-command-test-"));
+  const home = mkdtempSync(join(tmpdir(), "envd-daemon-command-test-"));
   mkdirSync(home, { recursive: true });
   writeFileSync(
     join(home, "ports.json"),
     JSON.stringify({ control: 1910, webdav: 2910 }),
   );
   writeFileSync(join(home, "control-token"), "token-1\n");
-  process.env["D_ENV_HOME"] = home;
+  process.env["ENVD_HOME"] = home;
 
   return fn().finally(() => {
-    delete process.env["D_ENV_HOME"];
+    delete process.env["ENVD_HOME"];
     rmSync(home, { recursive: true, force: true });
   });
 }
@@ -181,8 +176,8 @@ describe("daemon command launchd wiring", () => {
     let installOptions: LaunchdInstallOptions | undefined;
     const installResult: LaunchdInstallResult = {
       status: "installed",
-      label: "com.d-env.daemon",
-      plistPath: "/Users/test/Library/LaunchAgents/com.d-env.daemon.plist",
+      label: "com.envd.daemon",
+      plistPath: "/Users/test/Library/LaunchAgents/com.envd.daemon.plist",
     };
 
     const { buildDaemonCommand } = await loadDaemonModule();
@@ -213,8 +208,8 @@ describe("daemon command launchd wiring", () => {
     let uninstallCalls = 0;
     const uninstallResult: LaunchdUninstallResult = {
       status: "uninstalled",
-      label: "com.d-env.daemon",
-      plistPath: "/Users/test/Library/LaunchAgents/com.d-env.daemon.plist",
+      label: "com.envd.daemon",
+      plistPath: "/Users/test/Library/LaunchAgents/com.envd.daemon.plist",
     };
 
     const { buildDaemonCommand } = await loadDaemonModule();
@@ -255,7 +250,7 @@ describe("daemon systemd commands", () => {
     const { buildDaemonCommand } = await loadDaemonModule();
     let stdout = "";
     const command = buildDaemonCommand({
-      resolveDaemonPath: () => "/opt/d-env/dist/daemon/main.js",
+      resolveDaemonPath: () => "/opt/envd/dist/daemon/main.js",
       systemd: {
         platform: "linux",
         homeDir: "/home/alice",
@@ -276,16 +271,16 @@ describe("daemon systemd commands", () => {
 
     expect(JSON.parse(stdout) as Record<string, unknown>).toEqual({
       status: "installed",
-      serviceName: "d-envd.service",
-      unitPath: "/home/alice/.config/systemd/user/d-envd.service",
+      serviceName: "envdd.service",
+      unitPath: "/home/alice/.config/systemd/user/envdd.service",
     });
     expect(writtenUnit).toContain(
-      "ExecStart=/usr/bin/node /opt/d-env/dist/daemon/main.js\n",
+      "ExecStart=/usr/bin/node /opt/envd/dist/daemon/main.js\n",
     );
     expect(systemctlCalls).toEqual([
       ["daemon-reload"],
-      ["enable", "d-envd.service"],
-      ["start", "d-envd.service"],
+      ["enable", "envdd.service"],
+      ["start", "envdd.service"],
     ]);
   });
 
@@ -321,16 +316,16 @@ describe("daemon systemd commands", () => {
     await command.parseAsync(["uninstall"], { from: "user" });
 
     expect(stdout).toBe(
-      "d-envd systemd user service stopped and uninstalled\n" +
-        "  unit: /home/alice/.config/systemd/user/d-envd.service\n",
+      "envdd systemd user service stopped and uninstalled\n" +
+        "  unit: /home/alice/.config/systemd/user/envdd.service\n",
     );
     expect(systemctlCalls).toEqual([
-      ["disable", "d-envd.service"],
-      ["stop", "d-envd.service"],
+      ["disable", "envdd.service"],
+      ["stop", "envdd.service"],
       ["daemon-reload"],
     ]);
     expect(removeCalls).toEqual([
-      "/home/alice/.config/systemd/user/d-envd.service",
+      "/home/alice/.config/systemd/user/envdd.service",
     ]);
   });
 });

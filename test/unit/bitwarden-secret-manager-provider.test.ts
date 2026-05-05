@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createLogger } from "../../src/shared/logger.js";
 import type { ProviderContext } from "../../src/providers/base.js";
-import { DEnvError } from "../../src/shared/errors.js";
+import { EnvdError } from "../../src/shared/errors.js";
 
 interface MockBitwardenSecret {
   readonly id: string;
@@ -195,19 +195,19 @@ async function createInstance(token?: string) {
   });
 }
 
-function isDEnvErrorLike(err: unknown): err is DEnvError {
+function isEnvdErrorLike(err: unknown): err is EnvdError {
   return err instanceof Error && typeof Reflect.get(err, "code") === "string";
 }
 
-async function expectDEnvError(promise: Promise<unknown>): Promise<DEnvError> {
+async function expectEnvdError(promise: Promise<unknown>): Promise<EnvdError> {
   try {
     await promise;
   } catch (err: unknown) {
-    if (isDEnvErrorLike(err)) {
-      expect(err.name).toBe("DEnvError");
+    if (isEnvdErrorLike(err)) {
+      expect(err.name).toBe("EnvdError");
       return err;
     }
-    throw new Error("expected DEnvError", { cause: err });
+    throw new Error("expected EnvdError", { cause: err });
   }
   throw new Error("expected promise to reject");
 }
@@ -379,7 +379,7 @@ describe("bitwarden secret manager provider", () => {
     bitwardenState.projectError = new Error("403 forbidden");
 
     const provider = await createInstance();
-    const err = await expectDEnvError(provider.fetch());
+    const err = await expectEnvdError(provider.fetch());
 
     expect(err.code).toBe("provider_auth");
   });
@@ -388,7 +388,7 @@ describe("bitwarden secret manager provider", () => {
     bitwardenState.syncQueue.push(new Error("429 rate limit exceeded"));
 
     const provider = await createInstance();
-    const err = await expectDEnvError(provider.fetch());
+    const err = await expectEnvdError(provider.fetch());
 
     expect(err.code).toBe("provider_unreachable");
   });
@@ -411,7 +411,7 @@ describe("bitwarden secret manager provider", () => {
     });
 
     const provider = await createInstance();
-    const err = await expectDEnvError(provider.fetch());
+    const err = await expectEnvdError(provider.fetch());
 
     expect(err.code).toBe("provider_unreachable");
     expect(err.cause).toBeInstanceOf(TypeError);

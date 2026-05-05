@@ -4,7 +4,7 @@ import {
   randomBytes as nodeRandomBytes,
 } from "node:crypto";
 import type { Database } from "better-sqlite3";
-import { DEnvError } from "../shared/errors.js";
+import { EnvdError } from "../shared/errors.js";
 
 export type StagedDesiredMap = Readonly<Record<string, string | null>>;
 
@@ -49,14 +49,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function invalidStoredDesired(
   message = "stored staging desired state is invalid",
-): DEnvError {
-  return new DEnvError(message, {
+): EnvdError {
+  return new EnvdError(message, {
     code: "internal",
   });
 }
 
-function decryptFailure(cause: unknown): DEnvError {
-  return new DEnvError("stored staging desired state could not be decrypted", {
+function decryptFailure(cause: unknown): EnvdError {
+  return new EnvdError("stored staging desired state could not be decrypted", {
     code: "internal",
     cause,
   });
@@ -214,9 +214,10 @@ export class StagingRepo {
 
   hasEncryptedRows(): boolean {
     const row = this.db
-      .prepare<[], { count: number }>(
-        "SELECT COUNT(*) AS count FROM staging WHERE desired_version > 0",
-      )
+      .prepare<
+        [],
+        { count: number }
+      >("SELECT COUNT(*) AS count FROM staging WHERE desired_version > 0")
       .get();
     return (row?.count ?? 0) > 0;
   }

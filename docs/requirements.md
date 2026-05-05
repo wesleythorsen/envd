@@ -1,6 +1,6 @@
 # Requirements tree
 
-This is the **declarative** spec for the d-env MVP. Every node describes a **what**, not a **how**. Leaves are meant to be testable as pass/fail.
+This is the **declarative** spec for the envd MVP. Every node describes a **what**, not a **how**. Leaves are meant to be testable as pass/fail.
 
 - Use this to **validate** any proposed plan or implementation: does it satisfy every leaf?
 - Use this to **anchor scope debates**: changes to scope should land here first, then in the imperative plan.
@@ -17,7 +17,7 @@ If this tree and those docs disagree, **this tree wins**, and the docs are a bug
 
 ---
 
-## Root: A working MVP of `d-env`
+## Root: A working MVP of `envd`
 
 The tool from [vision.md](vision.md): a virtual `.env` file backed by a pluggable provider, served by a local daemon and managed by a CLI, for macOS and Linux.
 
@@ -51,7 +51,7 @@ The tool from [vision.md](vision.md): a virtual `.env` file backed by a pluggabl
   - 1.4.4 Initialization works fully non-interactively given config via flags/env vars.
 
 - **1.5 Onboarding a new machine from an existing project takes one command**
-  - 1.5.1 After cloning a repo that uses d-env, one command restores the working `.env`.
+  - 1.5.1 After cloning a repo that uses envd, one command restores the working `.env`.
   - 1.5.2 No secret material is required from the existing repo — creds come from the developer's own keychain.
 
 - **1.6 Current state is inspectable in one command**
@@ -69,7 +69,7 @@ The tool from [vision.md](vision.md): a virtual `.env` file backed by a pluggabl
   - 2.2.2 Adding configs (non-secret per-environment values), feature flags, or templated files is additive.
 
 - **2.3 New output formats plug in**
-  - 2.3.1 MVP renders `.env` format; JSON/YAML/shell/systemd-env can be added without touching unrelated code.
+  - 2.3.1 MVP renders `.env` format; JSON/YAML/shell/systemenvd can be added without touching unrelated code.
 
 - **2.4 New host platforms plug in**
   - 2.4.1 MVP supports macOS and Linux; Windows is out of scope (see 8.3) but no design choice makes it impossible.

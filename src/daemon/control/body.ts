@@ -1,5 +1,5 @@
 import type { IncomingMessage } from "node:http";
-import { DEnvError } from "../../shared/errors.js";
+import { EnvdError } from "../../shared/errors.js";
 
 const MAX_JSON_BODY_BYTES = 64 * 1024;
 
@@ -12,7 +12,7 @@ export function readJsonBody(req: IncomingMessage): Promise<unknown> {
       !contentType.includes("application/json")
     ) {
       reject(
-        new DEnvError("request body must be JSON", { code: "usage_error" }),
+        new EnvdError("request body must be JSON", { code: "usage_error" }),
       );
       return;
     }
@@ -24,7 +24,7 @@ export function readJsonBody(req: IncomingMessage): Promise<unknown> {
       size += chunk.length;
       if (size > MAX_JSON_BODY_BYTES) {
         req.destroy(
-          new DEnvError("request body is too large", { code: "usage_error" }),
+          new EnvdError("request body is too large", { code: "usage_error" }),
         );
         return;
       }
@@ -39,7 +39,7 @@ export function readJsonBody(req: IncomingMessage): Promise<unknown> {
         resolve(raw === "" ? {} : JSON.parse(raw));
       } catch (err: unknown) {
         reject(
-          new DEnvError("request body is not valid JSON", {
+          new EnvdError("request body is not valid JSON", {
             code: "usage_error",
             cause: err,
           }),

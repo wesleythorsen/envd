@@ -26,7 +26,7 @@ interface RunCall {
 }
 
 function withTempHome(fn: (homeDir: string) => Promise<void>): Promise<void> {
-  const homeDir = mkdtempSync(join(tmpdir(), "d-env-launchd-test-"));
+  const homeDir = mkdtempSync(join(tmpdir(), "envd-launchd-test-"));
   return fn(homeDir).finally(() => {
     rmSync(homeDir, { recursive: true, force: true });
   });
@@ -55,13 +55,13 @@ describe("launchd helper", () => {
       const result = await installLaunchdAgent({
         platform: "darwin",
         homeDir,
-        daemonPath: "/opt/d-env/dist/daemon/main.js",
+        daemonPath: "/opt/envd/dist/daemon/main.js",
         nodePath: "/usr/local/bin/node",
         stateLogDir,
         env: {
           PATH: "/usr/local/bin:/usr/bin:/bin",
-          D_ENV_HOME: join(homeDir, "state"),
-          D_ENV_MOUNT_PATH: join(homeDir, "mount"),
+          ENVD_HOME: join(homeDir, "state"),
+          ENVD_MOUNT_PATH: join(homeDir, "mount"),
         },
         run,
       });
@@ -75,15 +75,13 @@ describe("launchd helper", () => {
       expect(existsSync(stateLogDir)).toBe(true);
 
       const plist = readFileSync(plistPath, "utf-8");
-      expect(plist).toContain("<string>com.d-env.daemon</string>");
+      expect(plist).toContain("<string>com.envd.daemon</string>");
       expect(plist).toContain("<string>/usr/local/bin/node</string>");
-      expect(plist).toContain(
-        "<string>/opt/d-env/dist/daemon/main.js</string>",
-      );
+      expect(plist).toContain("<string>/opt/envd/dist/daemon/main.js</string>");
       expect(plist).toContain("<key>RunAtLoad</key>");
-      expect(plist).toContain("<key>D_ENV_HOME</key>");
-      expect(plist).toContain("<key>D_ENV_MOUNT_PATH</key>");
-      expect(plist).toContain("d-envd.launchd.err.log");
+      expect(plist).toContain("<key>ENVD_HOME</key>");
+      expect(plist).toContain("<key>ENVD_MOUNT_PATH</key>");
+      expect(plist).toContain("envdd.launchd.err.log");
     });
   });
 
@@ -99,7 +97,7 @@ describe("launchd helper", () => {
       await installLaunchdAgent({
         platform: "darwin",
         homeDir,
-        daemonPath: "/opt/d-env/dist/daemon/main.js",
+        daemonPath: "/opt/envd/dist/daemon/main.js",
         stateLogDir: join(homeDir, "state", "logs"),
         run,
       });
@@ -160,7 +158,7 @@ describe("launchd helper", () => {
     await expect(
       installLaunchdAgent({
         platform: "linux",
-        daemonPath: "/opt/d-env/dist/daemon/main.js",
+        daemonPath: "/opt/envd/dist/daemon/main.js",
         run,
       }),
     ).rejects.toMatchObject({
@@ -171,14 +169,14 @@ describe("launchd helper", () => {
 
   it("escapes plist string values", () => {
     const plist = createLaunchdPlist({
-      daemonPath: "/opt/d-env/<daemon>&main.js",
+      daemonPath: "/opt/envd/<daemon>&main.js",
       nodePath: "/usr/local/bin/node",
-      stateLogDir: "/tmp/d-env & logs",
+      stateLogDir: "/tmp/envd & logs",
       env: { PATH: "/bin:/usr/bin & /custom" },
     });
 
-    expect(plist).toContain("/opt/d-env/&lt;daemon&gt;&amp;main.js");
-    expect(plist).toContain("/tmp/d-env &amp; logs");
+    expect(plist).toContain("/opt/envd/&lt;daemon&gt;&amp;main.js");
+    expect(plist).toContain("/tmp/envd &amp; logs");
     expect(plist).toContain("/bin:/usr/bin &amp; /custom");
   });
 });
@@ -190,7 +188,7 @@ describe.skipIf(process.platform !== "darwin")("launchd plist on macOS", () => {
       writeFileSync(
         plistPath,
         createLaunchdPlist({
-          daemonPath: "/opt/d-env/dist/daemon/main.js",
+          daemonPath: "/opt/envd/dist/daemon/main.js",
           nodePath: "/usr/local/bin/node",
           stateLogDir: join(homeDir, "logs"),
           env: { PATH: "/usr/local/bin:/usr/bin:/bin" },

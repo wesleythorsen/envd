@@ -1,4 +1,4 @@
-# Daemon spec — `d-envd`
+# Daemon spec — `envdd`
 
 ## Responsibilities
 
@@ -10,7 +10,7 @@
 ## Lifecycle
 
 - Start: CLI commands auto-launch the daemon if it isn't running (unless `--no-autostart`).
-- PID and port info written to `~/.d-env/d-envd.pid` and `~/.d-env/d-envd.ports` on startup.
+- PID and port info written to `~/.envd/envdd.pid` and `~/.envd/envdd.ports` on startup.
 - On startup: open SQLite, load project registry into memory, bind sockets, start HTTP servers, warm cache lazily (nothing fetched until first read).
 - Shutdown: SIGTERM triggers graceful shutdown — drain in-flight requests, flush SQLite, remove PID/port files.
 - Single-instance: startup aborts if PID file points to a live process.
@@ -27,7 +27,7 @@
   - `DELETE` — on a data file, interpreted as "stage deletion of all its keys." Rare; mostly for tool compatibility.
   - `LOCK` / `UNLOCK` — advisory locks for editors that require them (TextEdit/BBEdit occasionally do on macOS). No-op semantics are fine if they satisfy clients.
   - `PROPPATCH` — accept no-op metadata writes (some clients set timestamps).
-- Error model: return WebDAV-compatible XML on failure, with a custom `X-DEnv-Error: <code>` header for easier CLI diagnosis.
+- Error model: return WebDAV-compatible XML on failure, with a custom `X-Envd-Error: <code>` header for easier CLI diagnosis.
 
 ### Virtual layout
 
@@ -60,7 +60,7 @@
   3. Compute diff vs. `(provider-snapshot ⊕ previous-staging)`.
   4. Persist new staging (atomic replace for that project; fully overwrites previous staging — the PUT represents the new desired state).
   5. Record a `staged` event. Return `204 No Content`.
-- On parse error: `400` with an `X-DEnv-Error: bad-dotenv` header and a short body. Do not update staging.
+- On parse error: `400` with an `X-Envd-Error: bad-dotenv` header and a short body. Do not update staging.
 
 ### Locking
 
@@ -69,7 +69,7 @@
 ## Control API
 
 - Default bind: `127.0.0.1:1910`.
-- All requests require header `Authorization: Bearer <token>` matching `~/.d-env/control.token`.
+- All requests require header `Authorization: Bearer <token>` matching `~/.envd/control.token`.
 - All responses JSON. All requests JSON when they have bodies.
 - Versioned: base path `/v1/…`.
 
@@ -86,7 +86,7 @@
 - `POST /v1/projects` — register new. Body: `{ path, providerInstanceId, providerConfig, format }`. Returns `{ id, token, mountPath }`.
 - `GET /v1/projects/:id` — detail + staging summary.
 - `DELETE /v1/projects/:id` — deregister. Query `purge=true` to also delete staging.
-- `POST /v1/projects/:id/symlink` — (re)create the symlink on disk. Convenience for `d-env link`.
+- `POST /v1/projects/:id/symlink` — (re)create the symlink on disk. Convenience for `envd link`.
 
 #### Staging / sync
 
@@ -170,6 +170,6 @@ Encryption at rest: per-daemon symmetric key stored in the OS keychain; `snapsho
 
 ## Logging & metrics (v1)
 
-- Structured JSON logs to `~/.d-env/logs/d-envd.log` (rotated at 5 MB, 5 files).
+- Structured JSON logs to `~/.envd/logs/envdd.log` (rotated at 5 MB, 5 files).
 - No values in logs; only keys, counts, timings, provider names.
 - Emit a minimal set of counters on request (`GET /v1/health?metrics=true`): reads, writes, commits, provider errors, cache hit ratio. Keeps us honest about performance without an external dependency.

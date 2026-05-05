@@ -1,5 +1,5 @@
 import { stderr as defaultStderr } from "node:process";
-import { DEnvError, type ErrorCode } from "../shared/errors.js";
+import { EnvdError, type ErrorCode } from "../shared/errors.js";
 
 interface Writable {
   write(chunk: string): unknown;
@@ -7,23 +7,23 @@ interface Writable {
 
 const ERROR_HINTS = {
   daemon_unreachable:
-    "Try: start the daemon with `d-env daemon start` or inspect `d-env daemon status`, then rerun the command.",
+    "Try: start the daemon with `envd daemon start` or inspect `envd daemon status`, then rerun the command.",
   usage_error:
     "Try: rerun the command with `--help` to confirm the required flags and arguments.",
   provider_unreachable:
-    "Try: run `d-env provider test <id>` and verify the provider host, network access, or service limits.",
+    "Try: run `envd provider test <id>` and verify the provider host, network access, or service limits.",
   provider_auth:
-    "Try: update the provider credentials, then rerun `d-env provider test <id>`.",
+    "Try: update the provider credentials, then rerun `envd provider test <id>`.",
   commit_conflict:
-    "Try: rerun with `d-env commit --ours` to keep local values or `d-env commit --theirs` to accept remote values.",
+    "Try: rerun with `envd commit --ours` to keep local values or `envd commit --theirs` to accept remote values.",
   mount_failed:
-    "Try: run `d-env status` to inspect the mount, then restart the daemon and relink the project.",
+    "Try: run `envd status` to inspect the mount, then restart the daemon and relink the project.",
   not_initialized:
-    "Try: run `d-env init` in this project directory before retrying the command.",
+    "Try: run `envd init` in this project directory before retrying the command.",
   internal:
-    "Try: rerun the command, then inspect `d-env daemon logs --tail 100` if the problem persists.",
+    "Try: rerun the command, then inspect `envd daemon logs --tail 100` if the problem persists.",
   bad_dotenv:
-    "Try: fix the .env syntax and rerun the command, or inspect the rendered output with `d-env diff --values`.",
+    "Try: fix the .env syntax and rerun the command, or inspect the rendered output with `envd diff --values`.",
   unauthorized:
     "Try: restart the daemon to refresh local auth state, then rerun the command.",
   not_found:
@@ -37,7 +37,7 @@ export function errorHintForCode(code: ErrorCode): string {
 }
 
 export function formatCliError(error: unknown): string {
-  if (error instanceof DEnvError) {
+  if (error instanceof EnvdError) {
     return `${error.message}\n${errorHintForCode(error.code)}`;
   }
   if (error instanceof Error) {
