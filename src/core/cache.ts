@@ -17,6 +17,7 @@ export interface Cache<T> {
     fetcher: () => Promise<T>,
     opts: CacheGetOptions,
   ): Promise<CacheResult<T>>;
+  peek(projectId: string): CacheResult<T> | undefined;
   invalidate(projectId: string): void;
 }
 
@@ -127,6 +128,10 @@ export function createCache<T = unknown>(opts: CacheOptions = {}): Cache<T> {
 
       const entry = existing ?? {};
       return startFetch(projectId, entry, fetcher);
+    },
+
+    peek(projectId) {
+      return entries.get(projectId)?.snapshot;
     },
 
     invalidate(projectId) {

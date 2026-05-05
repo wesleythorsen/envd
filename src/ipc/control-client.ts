@@ -19,6 +19,7 @@ export interface ControlClient {
   }>;
   createProject(input: CreateProjectInput): Promise<CreateProjectResult>;
   getProject(id: string): Promise<ProjectDetail>;
+  getProjectStatus(id: string): Promise<ProjectStatusDetail>;
   getProjectDiff(
     id: string,
     opts?: ProjectDiffOptions,
@@ -71,6 +72,23 @@ export interface ProjectDetail {
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly mountPath: string;
+}
+
+export interface ProjectStatusDetail {
+  readonly providerInstanceId: string | null;
+  readonly provider: string | null;
+  readonly providerInstanceName: string | null;
+  readonly providerHealthy: boolean | null;
+  readonly providerError: string | null;
+  readonly lastFetchTime: number | null;
+  readonly staging:
+    | {
+        readonly added: number;
+        readonly modified: number;
+        readonly deleted: number;
+        readonly total: number;
+      }
+    | null;
 }
 
 export interface ProjectDiffOptions {
@@ -645,6 +663,15 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
         base,
         token,
         `/v1/projects/${encodeURIComponent(id)}`,
+        timeoutMs,
+      );
+    },
+
+    async getProjectStatus(id) {
+      return apiGet<ProjectStatusDetail>(
+        base,
+        token,
+        `/v1/projects/${encodeURIComponent(id)}/status`,
         timeoutMs,
       );
     },

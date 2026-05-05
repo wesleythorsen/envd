@@ -45,6 +45,7 @@ function fakeClient(): ControlClient & {
       Promise.resolve({ cli: null, daemon: "test", protocol: "v1" }),
     createProject: () => Promise.reject(new Error("not needed")),
     getProject: () => Promise.reject(new Error("not needed")),
+    getProjectStatus: () => Promise.reject(new Error("not needed")),
     getProjectDiff: (id) => {
       diffCalls.push(id);
       return Promise.resolve(diffResult);

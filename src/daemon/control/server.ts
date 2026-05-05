@@ -539,6 +539,43 @@ function readCacheTtlMs(config: unknown): number {
   return raw;
 }
 
+async function readProjectSecrets(
+  projectId: string,
+  providerInstanceId: string | null,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+  cache: Cache<SecretMap>,
+): Promise<CacheResult<SecretMap>> {
+  if (providerInstanceId === null) {
+    throw new DEnvError("project has no provider instance", {
+      code: "usage_error",
+      details: { projectId },
+    });
+  }
+
+  const repo = requireProviderInstanceRepo(providerInstanceRepo);
+  const record = repo.get(providerInstanceId);
+  if (record === undefined) {
+    throw new DEnvError("provider instance not found", {
+      code: "provider_unreachable",
+      details: { providerInstanceId },
+    });
+  }
+
+  const ttlMs = readCacheTtlMs(parseStoredConfig(record));
+  return await cache.get(
+    projectId,
+    () =>
+      fetchProjectSecrets(
+        projectId,
+        providerInstanceId,
+        providerInstanceRepo,
+        keychain,
+      ),
+    { ttlMs },
+  );
+}
+
 async function refreshProjectSecrets(
   projectId: string,
   providerInstanceId: string | null,
@@ -636,6 +673,100 @@ async function handleGetProjectDiff(
   const diff = diffSecrets(remote, stagedDesiredToSecretMap(desired));
   const keys = toSecretDiffKeys(diff);
   writeJson(res, 200, includeValues ? { keys, values: diff } : { keys });
+}
+
+interface StagingSummary {
+  readonly added: number;
+  readonly modified: number;
+  readonly deleted: number;
+  readonly total: number;
+}
+
+function summarizeStaging(keys: SecretDiffKeys): StagingSummary {
+  const added = keys.added.length;
+  const modified = keys.modified.length;
+  const deleted = keys.deleted.length;
+  return {
+    added,
+    modified,
+    deleted,
+    total: added + modified + deleted,
+  };
+}
+
+async function handleGetProjectStatus(
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  stagingRepo: StagingRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+  cache: Cache<SecretMap>,
+  id: string,
+): Promise<void> {
+  const projects = requireProjectRepo(projectRepo);
+  const staging = requireStagingRepo(stagingRepo);
+  const project = projects.get(id);
+  if (project === undefined) {
+    writeJsonError(res, 404, "not_found", "Project not found");
+    return;
+  }
+
+  const desired = staging.getDesired(id);
+  const cached = cache.peek(id);
+  let provider: string | null = null;
+  let providerInstanceName: string | null = null;
+  let providerHealthy: boolean | null = null;
+  let providerError: string | null = null;
+  let lastFetchTime: number | null = cached?.fetchedAt ?? null;
+  let remote: SecretMap | undefined = cached?.value;
+
+  if (project.providerInstanceId !== null) {
+    const providerRepo = requireProviderInstanceRepo(providerInstanceRepo);
+    const record = providerRepo.get(project.providerInstanceId);
+    if (record === undefined) {
+      providerHealthy = false;
+      providerError = "provider instance not found";
+    } else {
+      provider = record.provider;
+      providerInstanceName = record.name;
+      try {
+        const snapshot = await readProjectSecrets(
+          id,
+          project.providerInstanceId,
+          providerInstanceRepo,
+          keychain,
+          cache,
+        );
+        remote = snapshot.value;
+        lastFetchTime = snapshot.fetchedAt;
+        providerHealthy = true;
+      } catch (err: unknown) {
+        providerHealthy = false;
+        providerError = err instanceof Error ? err.message : String(err);
+      }
+    }
+  }
+
+  let staged: StagingSummary | null;
+  if (desired === undefined) {
+    staged = { added: 0, modified: 0, deleted: 0, total: 0 };
+  } else if (remote === undefined) {
+    staged = null;
+  } else {
+    staged = summarizeStaging(
+      toSecretDiffKeys(diffSecrets(remote, stagedDesiredToSecretMap(desired))),
+    );
+  }
+
+  writeJson(res, 200, {
+    providerInstanceId: project.providerInstanceId,
+    provider,
+    providerInstanceName,
+    providerHealthy,
+    providerError,
+    lastFetchTime,
+    staged,
+  });
 }
 
 function parseProjectPullBody(body: unknown): { force: boolean } {
@@ -1360,7 +1491,7 @@ function controlPathLabel(path: string): string {
     return "/v1/projects/:id";
   }
 
-  const projectAction = /^\/v1\/projects\/[^/]+\/(diff|pull|commit)$/.exec(
+  const projectAction = /^\/v1\/projects\/[^/]+\/(diff|pull|commit|status)$/.exec(
     path,
   );
   if (projectAction !== null) {
@@ -1591,6 +1722,38 @@ function dispatch(
         providerInstanceRepo,
         stagingRepo,
         keychain,
+        projectId,
+      ).catch((err: unknown) => {
+        writeErrorFromUnknown(res, err);
+      });
+      return;
+    }
+
+    writeJsonError(
+      res,
+      405,
+      "method_not_allowed",
+      `Method ${method} not allowed on ${path}`,
+    );
+    return;
+  }
+
+  const projectStatusMatch = /^\/v1\/projects\/([^/]+)\/status$/.exec(path);
+  if (projectStatusMatch !== null) {
+    const projectId = projectStatusMatch[1];
+    if (projectId === undefined) {
+      writeJsonError(res, 404, "not_found", `No route for ${method} ${path}`);
+      return;
+    }
+
+    if (method === "GET") {
+      void handleGetProjectStatus(
+        res,
+        projectRepo,
+        providerInstanceRepo,
+        stagingRepo,
+        keychain,
+        cache,
         projectId,
       ).catch((err: unknown) => {
         writeErrorFromUnknown(res, err);

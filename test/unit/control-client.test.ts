@@ -11,12 +11,13 @@ import {
 import { DEnvError } from "../../src/shared/errors.js";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openState, type StateStore } from "../../src/core/state.js";
 import { ProjectRepo } from "../../src/core/project.js";
 import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
+import { StagingRepo } from "../../src/core/staging.js";
 
 // ---------------------------------------------------------------------------
 // Test server setup
@@ -80,16 +81,31 @@ describe("project APIs happy path", () => {
   let state: StateStore;
   let tempDir: string;
   let projectPath: string;
+  let providerFile: string;
+  let providerInstances: ProviderInstanceRepo;
+  let stagingRepo: StagingRepo;
+  let providerInstanceId: string;
 
   beforeAll(async () => {
     tempDir = mkdtempSync(join(tmpdir(), "d-env-client-projects-"));
     projectPath = join(tempDir, "project");
+    providerFile = join(tempDir, "provider.json");
     mkdirSync(projectPath);
+    writeFileSync(providerFile, JSON.stringify({ BASE: "remote" }));
     state = openState(join(tempDir, "state.db"));
+    providerInstances = new ProviderInstanceRepo(state.db);
+    stagingRepo = new StagingRepo(state.db);
+    providerInstanceId = providerInstances.create({
+      provider: "local-file",
+      name: "Project status fixture",
+      config: JSON.stringify({ path: providerFile }),
+    }).id;
     projectServer = await startControlServer({
       port: 0,
       token: projectToken,
       projectRepo: new ProjectRepo(state.db),
+      providerInstanceRepo: providerInstances,
+      stagingRepo,
     });
     projectClient = createControlClient({
       baseUrl: `http://127.0.0.1:${projectServer.port}`,
@@ -103,8 +119,11 @@ describe("project APIs happy path", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("creates and gets a project", async () => {
-    const created = await projectClient.createProject({ path: projectPath });
+  it("creates, gets, and reports project status", async () => {
+    const created = await projectClient.createProject({
+      path: projectPath,
+      providerInstanceId,
+    });
     expect(created.id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
@@ -117,6 +136,32 @@ describe("project APIs happy path", () => {
     expect(detail.id).toBe(created.id);
     expect(detail.path).toBe(projectPath);
     expect(detail.mountPath).toBe(created.mountPath);
+
+    stagingRepo.setDesired(created.id, {
+      ADDED: "fresh",
+      BASE: "changed",
+      REMOVED: null,
+    });
+    writeFileSync(
+      providerFile,
+      JSON.stringify({ BASE: "remote", REMOVED: "present" }),
+    );
+
+    const status = await projectClient.getProjectStatus(created.id);
+    expect(status).toEqual({
+      providerInstanceId,
+      provider: "local-file",
+      providerInstanceName: "Project status fixture",
+      providerHealthy: true,
+      providerError: null,
+      lastFetchTime: expect.any(Number),
+      staged: {
+        added: 1,
+        modified: 1,
+        deleted: 1,
+        total: 3,
+      },
+    });
   });
 });
 

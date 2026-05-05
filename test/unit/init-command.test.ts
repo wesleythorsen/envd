@@ -93,6 +93,10 @@ class FakeControlClient implements ControlClient {
     return Promise.resolve(this.project);
   }
 
+  getProjectStatus(): Promise<never> {
+    return Promise.reject(new Error("not needed"));
+  }
+
   getProjectDiff(): Promise<never> {
     return Promise.reject(new Error("not needed"));
   }

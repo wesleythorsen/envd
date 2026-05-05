@@ -6,12 +6,16 @@ import { getStatus } from "../../src/cli/commands/status.js";
 import type {
   ControlClient,
   ProjectDetail,
+  ProjectStatusDetail,
 } from "../../src/ipc/control-client.js";
 import type { MountAdapter } from "../../src/mount/adapter.js";
 import { DEnvError } from "../../src/shared/errors.js";
 
 class FakeControlClient implements ControlClient {
-  constructor(private readonly project: ProjectDetail | null = null) {}
+  constructor(
+    private readonly project: ProjectDetail | null = null,
+    private readonly status: ProjectStatusDetail | null = null,
+  ) {}
 
   health(): Promise<{ ok: boolean; version: string; uptimeSec: number }> {
     return Promise.resolve({ ok: true, version: "test", uptimeSec: 12 });
@@ -38,6 +42,13 @@ class FakeControlClient implements ControlClient {
       return Promise.reject(new Error("not found"));
     }
     return Promise.resolve(this.project);
+  }
+
+  getProjectStatus(id: string): Promise<ProjectStatusDetail> {
+    if (this.status === null || this.project === null || this.project.id !== id) {
+      return Promise.reject(new Error("not found"));
+    }
+    return Promise.resolve(this.status);
   }
 
   getProjectDiff(): Promise<never> {
@@ -122,10 +133,19 @@ describe("getStatus", () => {
         updatedAt: 1,
         mountPath: envTarget,
       };
+      const projectStatus: ProjectStatusDetail = {
+        providerInstanceId: "provider-1",
+        provider: "local-file",
+        providerInstanceName: "Local secrets",
+        providerHealthy: true,
+        providerError: null,
+        lastFetchTime: Date.UTC(2026, 0, 2, 3, 4, 5),
+        staging: { added: 1, modified: 2, deleted: 3, total: 6 },
+      };
 
       const status = await getStatus({
         projectPath: dir,
-        client: new FakeControlClient(project),
+        client: new FakeControlClient(project, projectStatus),
         mountAdapter: new FakeMountAdapter(false),
       });
 
@@ -136,7 +156,17 @@ describe("getStatus", () => {
         envPath: join(dir, ".env"),
         symlinkTarget: envTarget,
         registered: true,
-        lastFetchTime: null,
+        mountPath: envTarget,
+        format: "dotenv",
+        provider: {
+          instanceId: "provider-1",
+          provider: "local-file",
+          name: "Local secrets",
+          healthy: true,
+          error: null,
+        },
+        staging: { added: 1, modified: 2, deleted: 3, total: 6 },
+        lastFetchTime: "2026-01-02T03:04:05.000Z",
       });
     });
   });

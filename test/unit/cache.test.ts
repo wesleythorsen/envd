@@ -61,6 +61,10 @@ describe("createCache", () => {
 
     expect(result).toEqual({ value: "first", fetchedAt: 1000 });
     expect(calls).toBe(1);
+    expect(cache.peek("project-1")).toEqual({
+      value: "first",
+      fetchedAt: 1000,
+    });
   });
 
   it("refetches values after TTL expires", async () => {
@@ -163,6 +167,7 @@ describe("createCache", () => {
     );
 
     cache.invalidate("project-1");
+    expect(cache.peek("project-1")).toBeUndefined();
 
     const result = await cache.get(
       "project-1",
@@ -218,5 +223,10 @@ describe("createCache", () => {
 
     expect(result).toEqual({ value: "fresh", fetchedAt: 1000 });
     expect(calls).toBe(2);
+  });
+
+  it("returns undefined from peek when no snapshot has been fetched", () => {
+    const cache = createCache<string>();
+    expect(cache.peek("missing")).toBeUndefined();
   });
 });
