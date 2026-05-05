@@ -116,6 +116,7 @@ describe("OPTIONS /", () => {
     expect(res.headers["allow"]).toContain("PROPFIND");
     expect(res.headers["allow"]).toContain("GET");
     expect(res.headers["allow"]).toContain("HEAD");
+    expect(res.headers["allow"]).toContain("PUT");
     expect(res.headers["ms-author-via"]).toBe("DAV");
     await res.body.dump();
   });
@@ -374,10 +375,9 @@ describe("404 for unknown paths", () => {
 // ---------------------------------------------------------------------------
 
 describe("405 for unimplemented verbs", () => {
-  it("PUT → 405", async () => {
+  it("MKCOL → 405", async () => {
     const res = await request(`${base}${projectHref}/.env`, {
-      method: "PUT",
-      body: "KEY=val\n",
+      method: "MKCOL",
     });
     expect(res.statusCode).toBe(405);
     await res.body.dump();

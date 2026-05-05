@@ -13,6 +13,7 @@ import {
 } from "../shared/paths.js";
 import { openState } from "../core/state.js";
 import { ProjectRepo } from "../core/project.js";
+import { StagingRepo } from "../core/staging.js";
 import { ProviderInstanceRepo } from "../core/provider-instance.js";
 import { createKeychainAdapter } from "../core/keychain.js";
 
@@ -143,6 +144,7 @@ async function main(): Promise<void> {
   const token = loadOrCreateToken();
   const state = openState(stateDbFile());
   const projectRepo = new ProjectRepo(state.db);
+  const stagingRepo = new StagingRepo(state.db);
   const providerInstanceRepo = new ProviderInstanceRepo(state.db);
   const keychain = createKeychainAdapter();
 
@@ -179,7 +181,12 @@ async function main(): Promise<void> {
   const shutdownBox: { fn?: () => void } = {};
 
   const [webdav, control] = await Promise.all([
-    startWebdavServer({ projectRepo, providerInstanceRepo, keychain }),
+    startWebdavServer({
+      projectRepo,
+      stagingRepo,
+      providerInstanceRepo,
+      keychain,
+    }),
     startControlServer({
       token,
       projectRepo,

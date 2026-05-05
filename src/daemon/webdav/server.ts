@@ -6,8 +6,10 @@ import {
 import type { Server } from "node:http";
 import { createHash } from "node:crypto";
 import { createLogger } from "../../shared/logger.js";
+import { DEnvError } from "../../shared/errors.js";
 import type { Project, ProjectRepo } from "../../core/project.js";
 import { createCache, type Cache, type CacheResult } from "../../core/cache.js";
+import type { StagingRepo } from "../../core/staging.js";
 import type {
   ProviderInstanceRecord,
   ProviderInstanceRepo,
@@ -25,11 +27,13 @@ import { createKeychainAdapter } from "../../core/keychain.js";
 
 const log = createLogger("daemon/webdav");
 const DEFAULT_CACHE_TTL_MS = 60_000;
+const ALLOW_HEADER = "OPTIONS, PROPFIND, GET, HEAD, PUT";
 
 export interface WebdavServerOpts {
   /** TCP port to bind. Pass 0 for an ephemeral port (tests). Default: 1911. */
   port?: number;
   projectRepo: ProjectRepo;
+  stagingRepo?: StagingRepo;
   providerInstanceRepo?: ProviderInstanceRepo;
   keychain?: KeychainAdapter;
   cache?: Cache<SecretMap>;
@@ -50,6 +54,7 @@ interface RenderedProjectFile {
 
 interface WebdavRuntime {
   readonly projectRepo: ProjectRepo;
+  readonly stagingRepo: StagingRepo | undefined;
   readonly providerInstanceRepo: ProviderInstanceRepo | undefined;
   readonly keychain: KeychainAdapter | undefined;
   readonly cache: Cache<SecretMap>;
@@ -271,7 +276,7 @@ function multistatus(body: string): string {
 function handleOptions(res: ServerResponse): void {
   res.writeHead(200, {
     DAV: "1, 2",
-    Allow: "OPTIONS, PROPFIND, GET, HEAD",
+    Allow: ALLOW_HEADER,
     "MS-Author-Via": "DAV",
     "Content-Length": "0",
   });
@@ -429,6 +434,40 @@ async function handleGet(
   }
 }
 
+function readRequestBody(req: IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+
+    req.on("data", (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
+
+    req.on("error", reject);
+
+    req.on("end", () => {
+      resolve(Buffer.concat(chunks));
+    });
+  });
+}
+
+async function handlePut(
+  req: IncomingMessage,
+  res: ServerResponse,
+  runtime: WebdavRuntime,
+  project: Project,
+): Promise<void> {
+  const stagingRepo = runtime.stagingRepo;
+  if (stagingRepo === undefined) {
+    throw new Error("staging registry is not available");
+  }
+
+  const bytes = await readRequestBody(req);
+  const desired = secretsKind.parse(bytes, parseProjectFormat(project));
+  stagingRepo.setDesired(project.id, desired);
+  res.writeHead(204, { "Content-Length": "0" });
+  res.end();
+}
+
 function ifNoneMatchMatches(
   rawHeader: string | string[] | undefined,
   etag: string,
@@ -459,10 +498,25 @@ function handleNotFound(res: ServerResponse): void {
 
 function handleMethodNotAllowed(res: ServerResponse): void {
   res.writeHead(405, {
-    Allow: "OPTIONS, PROPFIND, GET, HEAD",
+    Allow: ALLOW_HEADER,
     "Content-Length": "0",
   });
   res.end();
+}
+
+function handleBadDotenv(res: ServerResponse, err: unknown): void {
+  log.warn({
+    msg: "webdav dotenv parse failed",
+    data: { error: String(err) },
+  });
+
+  const body = Buffer.from("Bad .env", "utf-8");
+  res.writeHead(400, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Content-Length": body.length,
+    "X-DEnv-Error": "bad_dotenv",
+  });
+  res.end(body);
 }
 
 function handleProviderUnavailable(res: ServerResponse, err: unknown): void {
@@ -540,6 +594,29 @@ async function dispatch(
     return;
   }
 
+  if (method === "PUT") {
+    const parsedPath = parseProjectPath(path);
+    if (parsedPath.kind === "project-env") {
+      const project = loadProject(projectRepo, parsedPath.id, parsedPath.token);
+      if (project !== undefined) {
+        try {
+          await handlePut(req, res, runtime, project);
+        } catch (err: unknown) {
+          if (err instanceof DEnvError && err.code === "bad_dotenv") {
+            handleBadDotenv(res, err);
+          } else {
+            handleInternalError(res, err);
+          }
+        }
+        return;
+      }
+      handleNotFound(res);
+    } else {
+      handleNotFound(res);
+    }
+    return;
+  }
+
   if (method === "GET" || method === "HEAD") {
     const parsedPath = parseProjectPath(path);
     if (parsedPath.kind === "project-env") {
@@ -563,7 +640,7 @@ async function dispatch(
     return;
   }
 
-  // PUT, LOCK, UNLOCK, DELETE, MKCOL — not implemented in US-1.1
+  // LOCK, UNLOCK, DELETE, MKCOL — not implemented.
   handleMethodNotAllowed(res);
 }
 
@@ -577,6 +654,7 @@ export function startWebdavServer(
   const bindPort = opts.port ?? 1911;
   const runtime: WebdavRuntime = {
     projectRepo: opts.projectRepo,
+    stagingRepo: opts.stagingRepo,
     providerInstanceRepo: opts.providerInstanceRepo,
     keychain:
       opts.keychain ??
