@@ -21,7 +21,7 @@ import type {
   ProviderInstance,
   SecretMap,
 } from "../../providers/base.js";
-import { InMemoryKeychainAdapter } from "../../providers/keychain.js";
+import { createKeychainAdapter } from "../../core/keychain.js";
 
 const log = createLogger("daemon/webdav");
 const DEFAULT_CACHE_TTL_MS = 60_000;
@@ -582,7 +582,7 @@ export function startWebdavServer(
       opts.keychain ??
       (opts.providerInstanceRepo === undefined
         ? undefined
-        : new InMemoryKeychainAdapter()),
+        : createKeychainAdapter()),
     cache: opts.cache ?? createCache<SecretMap>(),
   };
 

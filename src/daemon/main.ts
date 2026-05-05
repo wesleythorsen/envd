@@ -14,7 +14,7 @@ import {
 import { openState } from "../core/state.js";
 import { ProjectRepo } from "../core/project.js";
 import { ProviderInstanceRepo } from "../core/provider-instance.js";
-import { InMemoryKeychainAdapter } from "../providers/keychain.js";
+import { createKeychainAdapter } from "../core/keychain.js";
 
 // createRequire is the stable way to load JSON in ESM without import assertions
 const require = createRequire(import.meta.url);
@@ -144,7 +144,7 @@ async function main(): Promise<void> {
   const state = openState(stateDbFile());
   const projectRepo = new ProjectRepo(state.db);
   const providerInstanceRepo = new ProviderInstanceRepo(state.db);
-  const keychain = new InMemoryKeychainAdapter();
+  const keychain = createKeychainAdapter();
 
   // Shutdown logic shared by SIGTERM and the /v1/shutdown endpoint.
   // Defined here so both paths call the exact same code.

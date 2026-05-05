@@ -20,7 +20,7 @@ import type {
   Provider,
   ProviderContext,
 } from "../../providers/base.js";
-import { InMemoryKeychainAdapter } from "../../providers/keychain.js";
+import { createKeychainAdapter } from "../../core/keychain.js";
 import { readJsonBody } from "./body.js";
 
 // createRequire is the stable way to load JSON in ESM without import assertions
@@ -966,9 +966,7 @@ export function startControlServer(
   const providerInstanceRepo = opts.providerInstanceRepo;
   const keychain =
     opts.keychain ??
-    (providerInstanceRepo === undefined
-      ? undefined
-      : new InMemoryKeychainAdapter());
+    (providerInstanceRepo === undefined ? undefined : createKeychainAdapter());
   const routes = buildRoutes(opts.onShutdown);
 
   return new Promise((resolve, reject) => {
