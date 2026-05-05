@@ -8,6 +8,8 @@ import { DEnvError } from "../../src/shared/errors.js";
 
 const apiHost = "https://doppler.test";
 const downloadUrl = `${apiHost}/v3/configs/config/secrets/download`;
+const updateUrl = `${apiHost}/v3/configs/config/secrets`;
+const deleteUrl = `${apiHost}/v3/configs/config/secret`;
 const server = setupServer();
 
 function makeContext(apiToken = "dp.test-token"): ProviderContext {
@@ -77,6 +79,90 @@ describe("doppler provider", () => {
     const provider = await createInstance();
 
     expect(await provider.fetch()).toEqual({ FOO: "bar", EMPTY: "" });
+  });
+
+  it("pushes upserts and explicit deletes then verifies with a fresh fetch", async () => {
+    const changes = {
+      upserts: { FOO: "next", NEW: "value" },
+      deletes: ["OLD"],
+    };
+    const writes: string[] = [];
+    let fetches = 0;
+
+    server.use(
+      http.post(updateUrl, async ({ request }) => {
+        writes.push("upsert");
+        expect(request.headers.get("authorization")).toBe(
+          "Bearer dp.test-token",
+        );
+        expect(request.headers.get("accept")).toBe("application/json");
+        expect(request.headers.get("content-type")).toBe("application/json");
+        expect(await request.json()).toEqual({
+          project: "web",
+          config: "dev",
+          secrets: { FOO: "next", NEW: "value" },
+        });
+        return HttpResponse.json({ ignored: "response echo" });
+      }),
+      http.delete(deleteUrl, ({ request }) => {
+        const url = new URL(request.url);
+        writes.push(`delete:${url.searchParams.get("name")}`);
+        expect(url.searchParams.get("project")).toBe("web");
+        expect(url.searchParams.get("config")).toBe("dev");
+        expect(request.headers.get("authorization")).toBe(
+          "Bearer dp.test-token",
+        );
+        expect(request.headers.get("accept")).toBe("application/json");
+        return new HttpResponse(null, { status: 204 });
+      }),
+      http.get(downloadUrl, ({ request }) => {
+        fetches += 1;
+        const url = new URL(request.url);
+        expect(url.searchParams.get("format")).toBe("json");
+        return HttpResponse.json({ FOO: "next", NEW: "value" });
+      }),
+    );
+
+    const provider = await createInstance();
+
+    expect(await provider.push(changes)).toEqual({
+      status: "ok",
+      applied: changes,
+    });
+    expect(writes).toEqual(["upsert", "delete:OLD"]);
+    expect(fetches).toBe(1);
+  });
+
+  it("returns conflict with fresh remote secrets when a later write fails", async () => {
+    const writes: string[] = [];
+
+    server.use(
+      http.post(updateUrl, () => {
+        writes.push("upsert");
+        return HttpResponse.json({});
+      }),
+      http.delete(deleteUrl, ({ request }) => {
+        const url = new URL(request.url);
+        writes.push(`delete:${url.searchParams.get("name")}`);
+        return HttpResponse.json({}, { status: 503 });
+      }),
+      http.get(downloadUrl, () =>
+        HttpResponse.json({ NEW: "value", OLD: "still-present" }),
+      ),
+    );
+
+    const provider = await createInstance();
+
+    await expect(
+      provider.push({
+        upserts: { NEW: "value" },
+        deletes: ["OLD"],
+      }),
+    ).resolves.toEqual({
+      status: "conflict",
+      remote: { NEW: "value", OLD: "still-present" },
+    });
+    expect(writes).toEqual(["upsert", "delete:OLD"]);
   });
 
   it.each([401, 403])("maps %i responses to provider_auth", async (status) => {
