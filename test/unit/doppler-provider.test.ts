@@ -7,6 +7,7 @@ import type { ProviderContext } from "../../src/providers/base.js";
 import { DEnvError } from "../../src/shared/errors.js";
 
 const apiHost = "https://doppler.test";
+const meUrl = `${apiHost}/v3/me`;
 const downloadUrl = `${apiHost}/v3/configs/config/secrets/download`;
 const updateUrl = `${apiHost}/v3/configs/config/secrets`;
 const deleteUrl = `${apiHost}/v3/configs/config/secret`;
@@ -79,6 +80,52 @@ describe("doppler provider", () => {
     const provider = await createInstance();
 
     expect(await provider.fetch()).toEqual({ FOO: "bar", EMPTY: "" });
+  });
+
+  it("tests Doppler auth with v3/me without downloading secrets", async () => {
+    let downloads = 0;
+    server.use(
+      http.get(meUrl, ({ request }) => {
+        expect(request.headers.get("authorization")).toBe(
+          "Bearer dp.test-token",
+        );
+        expect(request.headers.get("accept")).toBe("application/json");
+        return HttpResponse.json({ id: "usr_test" });
+      }),
+      http.get(downloadUrl, () => {
+        downloads += 1;
+        return HttpResponse.json({ SHOULD_NOT: "download" });
+      }),
+    );
+
+    const provider = await createInstance();
+
+    expect(await provider.test()).toEqual({ ok: true });
+    expect(downloads).toBe(0);
+  });
+
+  it("returns a failed test result when Doppler rejects the token", async () => {
+    server.use(http.get(meUrl, () => HttpResponse.json({}, { status: 401 })));
+
+    const provider = await createInstance();
+
+    expect(await provider.test()).toEqual({
+      ok: false,
+      reason: "doppler provider authentication failed",
+    });
+  });
+
+  it("returns a failed test result when the API token is missing", async () => {
+    const provider = await dopplerProvider.create(makeContext(""), {
+      project: "web",
+      config: "dev",
+      apiHost,
+    });
+
+    expect(await provider.test()).toEqual({
+      ok: false,
+      reason: "doppler provider requires apiToken",
+    });
   });
 
   it("pushes upserts and explicit deletes then verifies with a fresh fetch", async () => {

@@ -106,6 +106,10 @@ function deleteSecretUrl(config: DopplerConfig, name: string): URL {
   return url;
 }
 
+function meUrl(config: DopplerConfig): URL {
+  return new URL("/v3/me", config.apiHost ?? DEFAULT_API_HOST);
+}
+
 function statusDetails(response: Response): Record<string, unknown> {
   return { provider: PROVIDER_NAME, statusCode: response.status };
 }
@@ -216,6 +220,47 @@ async function fetchSecrets(
   }
 
   return parseSecretMap(raw);
+}
+
+function errorReason(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function testAuth(
+  ctx: ProviderContext,
+  config: DopplerConfig,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  ctx.logger.debug({
+    msg: "doppler test",
+    data: { apiHost: config.apiHost ?? DEFAULT_API_HOST },
+  });
+
+  try {
+    const token = await apiToken(ctx);
+    let response: Response;
+    try {
+      response = await ctx.fetch(meUrl(config), {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    } catch (err: unknown) {
+      throw new DEnvError("doppler provider is unreachable", {
+        code: "provider_unreachable",
+        details: { provider: PROVIDER_NAME },
+        cause: err,
+      });
+    }
+
+    if (!response.ok) {
+      throw httpError(response);
+    }
+
+    return { ok: true };
+  } catch (err: unknown) {
+    return { ok: false, reason: errorReason(err) };
+  }
 }
 
 async function updateSecrets(
@@ -372,15 +417,7 @@ function instance(
     },
 
     async test(): Promise<{ ok: true } | { ok: false; reason: string }> {
-      try {
-        await fetchSecrets(ctx, config);
-        return { ok: true };
-      } catch (err: unknown) {
-        return {
-          ok: false,
-          reason: err instanceof Error ? err.message : String(err),
-        };
-      }
+      return testAuth(ctx, config);
     },
   };
 }
