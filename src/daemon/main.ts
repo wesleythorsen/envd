@@ -12,9 +12,13 @@ import {
   stateDbFile,
 } from "../shared/paths.js";
 import { createCache } from "../core/cache.js";
+import { loadOrCreateDaemonKey } from "../core/daemon-key.js";
 import { openState } from "../core/state.js";
 import { ProjectRepo } from "../core/project.js";
-import { StagingRepo } from "../core/staging.js";
+import {
+  createEncryptedStagingCodec,
+  StagingRepo,
+} from "../core/staging.js";
 import { ProviderInstanceRepo } from "../core/provider-instance.js";
 import { createKeychainAdapter } from "../core/keychain.js";
 import type { SecretMap } from "../providers/base.js";
@@ -144,12 +148,19 @@ async function main(): Promise<void> {
   writePidFile();
 
   const token = loadOrCreateToken();
+  const keychain = createKeychainAdapter();
   const state = openState(stateDbFile());
   const projectRepo = new ProjectRepo(state.db);
-  const stagingRepo = new StagingRepo(state.db);
+  const bootstrapStagingRepo = new StagingRepo(state.db);
+  const daemonKey = await loadOrCreateDaemonKey(keychain, {
+    mustExist: bootstrapStagingRepo.hasEncryptedRows(),
+  });
+  const stagingRepo = new StagingRepo(state.db, {
+    codec: createEncryptedStagingCodec(daemonKey),
+  });
+  stagingRepo.reencryptLegacyRows();
   const providerInstanceRepo = new ProviderInstanceRepo(state.db);
   const cache = createCache<SecretMap>();
-  const keychain = createKeychainAdapter();
 
   // Shutdown logic shared by SIGTERM and the /v1/shutdown endpoint.
   // Defined here so both paths call the exact same code.
