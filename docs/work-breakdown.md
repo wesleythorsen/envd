@@ -691,6 +691,66 @@ Many of these parallelize.
 
 ---
 
+### US-5.5 — Bitwarden Secret Manager provider
+
+**Goal.** Reading, writing, and testing a project backed by Bitwarden Secret Manager works end-to-end through the provider abstraction.
+
+**Acceptance criteria.**
+- `src/providers/bitwarden-secret-manager/index.ts` exists, exports a provider named `bitwarden-secret-manager`, and is registered in `src/providers/registry.ts`.
+- Instance config schema supports `{ projectId: string; apiUrl?: string }`.
+- Credential keys are `["accessToken"]`; the token is read through the existing keychain adapter and is never logged or persisted outside that adapter.
+- `fetch()` returns the active secrets for the configured Bitwarden project as a `SecretMap`, mapping Bitwarden secret names directly to `.env` keys.
+- `push()` applies `ChangeSet.upserts` and `ChangeSet.deletes` to the same project. If the remote API cannot complete the full mutation cleanly, the provider re-fetches and returns `{ status: "conflict", remote }` instead of pretending the write was atomic.
+- `test()` performs a cheap authenticated request against the configured project and returns `{ ok: true }` or `{ ok: false, reason }`.
+- Error mapping is consistent with existing providers: auth/authorization failures → `provider_auth`; network, rate-limit, and 5xx failures → `provider_unreachable`; malformed provider responses → `provider_unreachable` with `cause`.
+- Tests cover happy-path `fetch()` / `push()` / `test()` plus auth failure, unreachable backend, and partial-write conflict handling.
+
+**Tasks.**
+1. Add the Bitwarden provider module with config validation and credential lookup.
+2. Implement `fetch()`, `push()`, and `test()` against Bitwarden Secret Manager.
+3. Register the provider and expose its schema/credential metadata through the existing provider registry.
+4. Add provider tests using a fake server or `msw`; do not rely on a live Bitwarden account in CI.
+
+**Depends on.** US-4.2, US-4.5, US-5.1.
+
+**Notes for the agent.**
+- Prefer the documented Bitwarden Secret Manager HTTP API unless the official SDK materially reduces auth complexity. Do not add a large unofficial SDK just to save 50 lines.
+- Keep the provider contract boring: names map through verbatim, values are opaque strings, and no provider-local caching is allowed.
+
+---
+
+### US-5.6 — AWS Secrets Manager provider
+
+**Goal.** AWS Secrets Manager can back a project using a prefix-mapped, one-secret-per-key model that fits the existing `SecretMap` contract.
+
+**Acceptance criteria.**
+- `src/providers/aws-secrets-manager/index.ts` exists, exports a provider named `aws-secrets-manager`, and is registered in `src/providers/registry.ts`.
+- Instance config schema supports `{ region: string; secretPrefix: string; profile?: string; endpoint?: string; deleteMode?: "force" | "recoverable" }`.
+- Credential keys are `[]`; the provider uses the normal AWS credential chain for the current machine, optionally influenced by the configured AWS profile. A follow-up story can add explicit keychain-backed credentials if needed.
+- Remote mapping is explicit and documented: local key `FOO` maps to AWS secret name `<secretPrefix>/FOO`.
+- `fetch()` lists all secrets under the configured prefix, loads their `SecretString` values, rejects binary/non-string payloads, and returns a `SecretMap`.
+- `push()` creates or updates secrets for `upserts`, deletes secrets for `deletes`, and re-fetches the remote state if any step fails mid-flight so it can return `{ status: "conflict", remote }`.
+- `deleteMode` is honored:
+  - `"force"` uses immediate delete semantics suitable for ephemeral dev/test secrets.
+  - `"recoverable"` uses AWS's recovery-window delete behavior and documents that recreation may lag until AWS finishes deletion.
+- `test()` performs a cheap authenticated AWS call scoped to the configured prefix and returns `{ ok: true }` or `{ ok: false, reason }`.
+- Error mapping is consistent with other providers: credential/authz failures → `provider_auth`; throttling, transport, and AWS service failures → `provider_unreachable`.
+- Tests cover happy path, auth failure, throttling/unreachable behavior, binary-value rejection, and partial-write conflict handling.
+
+**Tasks.**
+1. Add the AWS provider module with config validation and prefix/key mapping helpers.
+2. Implement `fetch()`, `push()`, and `test()` using the official AWS SDK for JavaScript v3.
+3. Register the provider and expose its schema through the provider registry.
+4. Add unit tests with SDK/client mocks; no real AWS account should be required in CI.
+
+**Depends on.** US-4.2, US-4.5.
+
+**Notes for the agent.**
+- Do not hand-roll SigV4 or raw AWS REST calls. This is exactly what the AWS SDK is for.
+- Keep the one-secret-per-key model. The extension-points doc already anticipates AWS as a non-atomic backend; do not invent a bundled JSON secret format here.
+
+---
+
 ## Wave 8 — Write path (staging)
 
 ### US-6.1 — `staging` table + repository
@@ -974,6 +1034,40 @@ These are parallelizable among themselves once the preceding waves land.
 
 ---
 
+## Wave 12 — Rename / rebrand
+
+### US-10.1 — Rename the product to `envd` / `envdd`
+
+**Goal.** The project uses `envd` and `envdd` everywhere across binaries, persisted files, service descriptors, docs, and tests.
+
+**Acceptance criteria.**
+- `package.json` package name is `envd`.
+- CLI binary name is `envd`; daemon binary name is `envdd`.
+- User-facing descriptions, help text, logs, errors, examples, smoke-test paths, and docs use `envd` / `envdd`.
+- Persisted artifacts are renamed consistently:
+  - project file is `.envd.json`
+  - default state dir is `~/.envd`
+  - PID / log / service filenames move to `envdd.*`
+  - env vars use the `ENVD_*` namespace
+  - launchd label is `com.envd.daemon`
+  - systemd unit is `envdd.service`
+- The rename includes test fixtures, temp-directory names, launchd/systemd expectations, and mount labels so the codebase no longer carries stale pre-rename naming in active paths.
+- The only explicit out-of-scope rename is the local repo directory / GitHub repo name; the user will do that manually outside this story.
+- `npm run check`, `npm run build`, and `npm test` are green after the rename.
+
+**Tasks.**
+1. Rename package metadata, bin entries, command names, daemon names, and all user-facing output.
+2. Rename persisted files, default directories, environment variables, and service descriptors to the `envd` / `envdd` forms.
+3. Update docs, tests, fixtures, and temp-path literals so the codebase is internally consistent after the rename.
+
+**Depends on.** Everything.
+
+**Notes for the agent.**
+- This is a cross-cutting story. Treat it as a release-branch change, not as a casual refactor.
+- Do not keep compatibility shims for the old naming inside the codebase. This story is a hard rename.
+
+---
+
 ## Dependency graph (compact)
 
 ```
@@ -1000,6 +1094,8 @@ These are parallelizable among themselves once the preceding waves land.
 
 5.1 (needs 4.5)
 5.2, 5.3, 5.4 (need 4.1, 5.1)
+5.5 (needs 4.2, 4.5, 5.1)
+5.6 (needs 4.2, 4.5)
 
 6.1 (needs 3.1)
 6.2 (needs 4.8, 4.9, 6.1)
@@ -1015,6 +1111,7 @@ These are parallelizable among themselves once the preceding waves land.
 7.4 (needs 7.2)
 
 8.x, 9.x — parallel within-wave; see per-story deps.
+10.1 (needs everything)
 ```
 
 ## Parallelism rules of thumb for the orchestrator
