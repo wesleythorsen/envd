@@ -33,6 +33,7 @@ function fakeClient(overrides: Partial<ControlClient> = {}): ControlClient {
       Promise.resolve({ cli: null, daemon: "test", protocol: "v1" }),
     createProject: () => Promise.reject(new Error("not needed")),
     getProject: () => Promise.reject(new Error("not needed")),
+    getProjectDiff: () => Promise.reject(new Error("not needed")),
     deleteProject: () => Promise.resolve(),
     listProviders: () => Promise.resolve([localFileMetadata]),
     createProviderInstance: () => Promise.resolve({ id: "instance-1" }),

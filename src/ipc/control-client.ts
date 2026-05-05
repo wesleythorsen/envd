@@ -3,6 +3,7 @@ import { fetch } from "undici";
 import { DEnvError } from "../shared/errors.js";
 import * as paths from "../shared/paths.js";
 import type { JSONSchema } from "../providers/base.js";
+import type { SecretDiff, SecretDiffKeys } from "../kinds/secrets/diff.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -17,6 +18,10 @@ export interface ControlClient {
   }>;
   createProject(input: CreateProjectInput): Promise<CreateProjectResult>;
   getProject(id: string): Promise<ProjectDetail>;
+  getProjectDiff(
+    id: string,
+    opts?: ProjectDiffOptions,
+  ): Promise<ProjectDiffResult>;
   deleteProject(id: string): Promise<void>;
   listProviders(): Promise<readonly ProviderMetadata[]>;
   createProviderInstance(
@@ -57,6 +62,15 @@ export interface ProjectDetail {
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly mountPath: string;
+}
+
+export interface ProjectDiffOptions {
+  readonly values?: boolean;
+}
+
+export interface ProjectDiffResult {
+  readonly keys: SecretDiffKeys;
+  readonly values?: SecretDiff;
 }
 
 export interface ProviderMetadata {
@@ -572,6 +586,16 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
         base,
         token,
         `/v1/projects/${encodeURIComponent(id)}`,
+        timeoutMs,
+      );
+    },
+
+    async getProjectDiff(id, opts) {
+      const query = opts?.values === true ? "?values=true" : "";
+      return apiGet<ProjectDiffResult>(
+        base,
+        token,
+        `/v1/projects/${encodeURIComponent(id)}/diff${query}`,
         timeoutMs,
       );
     },

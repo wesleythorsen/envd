@@ -49,6 +49,10 @@ class FakeControlClient implements ControlClient {
     return Promise.resolve(this.project);
   }
 
+  getProjectDiff(): Promise<never> {
+    return Promise.reject(new Error("not needed"));
+  }
+
   deleteProject(id: string): Promise<void> {
     this.deletedProjectIds.push(id);
     return Promise.resolve();

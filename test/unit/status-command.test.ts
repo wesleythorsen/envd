@@ -40,6 +40,10 @@ class FakeControlClient implements ControlClient {
     return Promise.resolve(this.project);
   }
 
+  getProjectDiff(): Promise<never> {
+    return Promise.reject(new Error("not needed"));
+  }
+
   shutdown(): Promise<void> {
     return Promise.resolve();
   }
