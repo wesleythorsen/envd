@@ -9,7 +9,7 @@ import { createLogger } from "../../shared/logger.js";
 import { DEnvError } from "../../shared/errors.js";
 import type { Project, ProjectRepo } from "../../core/project.js";
 import { createCache, type Cache, type CacheResult } from "../../core/cache.js";
-import type { StagingRepo } from "../../core/staging.js";
+import type { StagedDesiredMap, StagingRepo } from "../../core/staging.js";
 import type {
   ProviderInstanceRecord,
   ProviderInstanceRepo,
@@ -216,13 +216,26 @@ async function readProviderSnapshot(
   }
 }
 
+function stagedDesiredToSecretMap(desired: StagedDesiredMap): SecretMap {
+  const map: Record<string, string> = {};
+  for (const [key, value] of Object.entries(desired)) {
+    if (value !== null) {
+      map[key] = value;
+    }
+  }
+  return map;
+}
+
 async function renderProjectFile(
   runtime: WebdavRuntime,
   project: Project,
 ): Promise<RenderedProjectFile> {
   const format = parseProjectFormat(project);
   const snapshot = await readProviderSnapshot(runtime, project);
-  const bytes = Buffer.from(secretsKind.render(snapshot.value, format));
+  const desired = runtime.stagingRepo?.getDesired(project.id);
+  const renderedMap =
+    desired === undefined ? snapshot.value : stagedDesiredToSecretMap(desired);
+  const bytes = Buffer.from(secretsKind.render(renderedMap, format));
   const hash = createHash("sha256").update(bytes).digest("hex");
 
   return {

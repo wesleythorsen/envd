@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { request } from "undici";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -8,8 +8,10 @@ import {
   type WebdavServerHandle,
 } from "../../src/daemon/webdav/server.js";
 import { ProjectRepo, type Project } from "../../src/core/project.js";
+import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
 import { openState, type StateStore } from "../../src/core/state.js";
 import { StagingRepo } from "../../src/core/staging.js";
+import type { KeychainAdapter } from "../../src/providers/base.js";
 
 interface StagingRow {
   desired: string;
@@ -23,6 +25,17 @@ interface WebdavStagingFixture {
 }
 
 const NOW = 2468;
+const noopKeychain: KeychainAdapter = {
+  set() {
+    return Promise.resolve();
+  },
+  get() {
+    return Promise.resolve(null);
+  },
+  delete() {
+    return Promise.resolve();
+  },
+};
 
 async function withWebdavStaging(
   fn: (fixture: WebdavStagingFixture) => Promise<void>,
@@ -130,5 +143,73 @@ describe("WebDAV PUT staging integration", () => {
       const desired = JSON.parse(row.desired) as Record<string, unknown>;
       expect(desired).toEqual({ UNCHANGED: "yes" });
     });
+  });
+
+  it("renders staged edits over a cached local-file provider snapshot", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "d-env-webdav-get-staging-"));
+    const projectDir = join(tempDir, "project");
+    const providerFile = join(tempDir, "secrets.json");
+    mkdirSync(projectDir);
+    writeFileSync(
+      providerFile,
+      JSON.stringify({
+        REMOTE_ONLY: "from-provider",
+        SHARED: "remote",
+      }),
+      "utf-8",
+    );
+
+    let server: WebdavServerHandle | undefined;
+    let state: StateStore | undefined;
+
+    try {
+      state = openState(join(tempDir, "state.db"));
+      const projectRepo = new ProjectRepo(state.db);
+      const providerInstanceRepo = new ProviderInstanceRepo(state.db);
+      const stagingRepo = new StagingRepo(state.db);
+      const providerInstance = providerInstanceRepo.create({
+        provider: "local-file",
+        name: "GET staging fixture",
+        config: JSON.stringify({ path: providerFile }),
+      });
+      const project = projectRepo.create({
+        path: projectDir,
+        providerInstanceId: providerInstance.id,
+      });
+
+      server = await startWebdavServer({
+        port: 0,
+        projectRepo,
+        providerInstanceRepo,
+        stagingRepo,
+        keychain: noopKeychain,
+      });
+
+      const url = envUrl(`http://127.0.0.1:${server.port}`, project);
+      const remote = await request(url);
+      expect(remote.statusCode).toBe(200);
+      expect(await remote.body.text()).toBe(
+        "REMOTE_ONLY=from-provider\nSHARED=remote\n",
+      );
+
+      const put = await request(url, {
+        method: "PUT",
+        body: "LOCAL_ONLY=staged\nSHARED=staged\n",
+      });
+      expect(put.statusCode).toBe(204);
+      await put.body.dump();
+
+      const merged = await request(url);
+      expect(merged.statusCode).toBe(200);
+      expect(await merged.body.text()).toBe(
+        "LOCAL_ONLY=staged\nSHARED=staged\n",
+      );
+    } finally {
+      if (server !== undefined) {
+        await server.close();
+      }
+      state?.close();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
