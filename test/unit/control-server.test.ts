@@ -13,7 +13,25 @@ import { ProjectRepo } from "../../src/core/project.js";
 import type { Cache } from "../../src/core/cache.js";
 import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
 import { StagingRepo } from "../../src/core/staging.js";
-import type { SecretMap } from "../../src/providers/base.js";
+import { providers } from "../../src/providers/registry.js";
+import type {
+  ChangeSet,
+  Provider,
+  ProviderContext,
+  PushResult,
+  SecretMap,
+} from "../../src/providers/base.js";
+
+function applyChanges(remote: SecretMap, changes: ChangeSet): SecretMap {
+  const next: Record<string, string> = { ...remote };
+  for (const key of changes.deletes) {
+    delete next[key];
+  }
+  for (const [key, value] of Object.entries(changes.upserts)) {
+    next[key] = value;
+  }
+  return next;
+}
 
 const TOKEN = generateToken();
 
@@ -500,6 +518,343 @@ describe("POST /v1/projects/:id/pull", () => {
       `get:${forceProjectId}`,
     ]);
     expect(fetchedValues).toEqual([{ REMOTE: "after-force" }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /v1/projects/:id/commit
+// ---------------------------------------------------------------------------
+
+describe("POST /v1/projects/:id/commit", () => {
+  const commitToken = generateToken();
+  const commitProviderName = "commit-test";
+  const mutableProviders = providers as Provider[];
+  let commitServer: ControlServerHandle;
+  let commitBase: string;
+  let state: StateStore;
+  let tempDir: string;
+  let stagingRepo: StagingRepo;
+  let projectId: string;
+  let remoteState: SecretMap = {};
+  let pushMode: "ok" | "conflict" | "throw" = "ok";
+  let pushedChanges: ChangeSet[] = [];
+  let cacheEvents: string[] = [];
+  let nextFetchedAt = 200_000;
+  const snapshots = new Map<string, { value: SecretMap; fetchedAt: number }>();
+
+  const cache: Cache<SecretMap> & {
+    reset(): void;
+    seed(projectId: string, value: SecretMap, fetchedAt?: number): void;
+  } = {
+    reset() {
+      snapshots.clear();
+      cacheEvents = [];
+      nextFetchedAt = 200_000;
+    },
+    seed(seedProjectId, value, fetchedAt = nextFetchedAt++) {
+      snapshots.set(seedProjectId, { value, fetchedAt });
+    },
+    async get(projectIdForCache, fetcher) {
+      cacheEvents.push(`get:${projectIdForCache}`);
+      const existing = snapshots.get(projectIdForCache);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const value = await fetcher();
+      const snapshot = { value, fetchedAt: nextFetchedAt++ };
+      snapshots.set(projectIdForCache, snapshot);
+      return snapshot;
+    },
+    invalidate(projectIdForCache) {
+      cacheEvents.push(`invalidate:${projectIdForCache}`);
+      snapshots.delete(projectIdForCache);
+    },
+  };
+
+  const commitProvider: Provider = {
+    name: commitProviderName,
+    instanceConfigSchema: { type: "object" },
+    credentialKeys: [],
+    create(ctx: ProviderContext, config: unknown) {
+      void ctx;
+      void config;
+      return Promise.resolve({
+        fetch() {
+          return Promise.resolve({ ...remoteState });
+        },
+        push(changes: ChangeSet): Promise<PushResult> {
+          pushedChanges.push(changes);
+          if (pushMode === "throw") {
+            return Promise.reject(new Error("simulated provider push failure"));
+          }
+          if (pushMode === "conflict") {
+            return Promise.resolve({
+              status: "conflict",
+              remote: { ...remoteState },
+            });
+          }
+          remoteState = applyChanges(remoteState, changes);
+          return Promise.resolve({ status: "ok", applied: changes });
+        },
+        test() {
+          return Promise.resolve({ ok: true as const });
+        },
+      });
+    },
+  };
+
+  beforeAll(async () => {
+    mutableProviders.push(commitProvider);
+
+    tempDir = mkdtempSync(join(tmpdir(), "d-env-control-commit-"));
+    const projectPath = join(tempDir, "commit-project");
+    mkdirSync(projectPath);
+
+    state = openState(join(tempDir, "state.db"));
+    const projectRepo = new ProjectRepo(state.db);
+    const providerInstanceRepo = new ProviderInstanceRepo(state.db);
+    stagingRepo = new StagingRepo(state.db);
+    const providerInstance = providerInstanceRepo.create({
+      provider: commitProviderName,
+      name: "Commit fixture",
+      config: JSON.stringify({}),
+    });
+    const project = projectRepo.create({
+      path: projectPath,
+      providerInstanceId: providerInstance.id,
+    });
+    projectId = project.id;
+
+    commitServer = await startControlServer({
+      port: 0,
+      token: commitToken,
+      projectRepo,
+      providerInstanceRepo,
+      stagingRepo,
+      cache,
+    });
+    commitBase = `http://127.0.0.1:${commitServer.port}`;
+  });
+
+  beforeEach(() => {
+    stagingRepo.clear(projectId);
+    cache.reset();
+    remoteState = {};
+    pushMode = "ok";
+    pushedChanges = [];
+  });
+
+  afterAll(async () => {
+    await commitServer.close();
+    state.close();
+    rmSync(tempDir, { recursive: true, force: true });
+    const index = mutableProviders.findIndex(
+      (provider) => provider.name === commitProviderName,
+    );
+    if (index !== -1) {
+      mutableProviders.splice(index, 1);
+    }
+  });
+
+  it("applies staged changes on a happy path commit", async () => {
+    cache.seed(projectId, { SHARED: "base", KEEP: "same" }, 111);
+    remoteState = { SHARED: "base", KEEP: "same" };
+    stagingRepo.setDesired(projectId, {
+      SHARED: "local",
+      KEEP: "same",
+      ADDED: "fresh",
+    });
+
+    const res = await request(`${commitBase}/v1/projects/${projectId}/commit`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${commitToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ message: "rotate value" }),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(await res.body.json()).toEqual({
+      applied: {
+        upserts: { SHARED: "local", ADDED: "fresh" },
+        deletes: [],
+      },
+      commitId: null,
+    });
+    expect(pushedChanges).toEqual([
+      {
+        upserts: { SHARED: "local", ADDED: "fresh" },
+        deletes: [],
+      },
+    ]);
+    expect(remoteState).toEqual({
+      SHARED: "local",
+      KEEP: "same",
+      ADDED: "fresh",
+    });
+    expect(stagingRepo.getDesired(projectId)).toBeUndefined();
+    expect(cacheEvents).toEqual([
+      `get:${projectId}`,
+      `invalidate:${projectId}`,
+      `get:${projectId}`,
+      `invalidate:${projectId}`,
+    ]);
+  });
+
+  it("returns 409 with structured conflicts for abort strategy", async () => {
+    cache.seed(projectId, { SHARED: "base", ONLY_REMOTE: "base" }, 111);
+    remoteState = { SHARED: "remote", ONLY_REMOTE: "base" };
+    stagingRepo.setDesired(projectId, {
+      SHARED: "local",
+      ONLY_REMOTE: "base",
+    });
+
+    const res = await request(`${commitBase}/v1/projects/${projectId}/commit`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${commitToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ strategy: "abort" }),
+    });
+
+    expect(res.statusCode).toBe(409);
+    const body = (await res.body.json()) as Record<string, unknown>;
+    const err = body["error"] as Record<string, unknown>;
+    expect(err["code"]).toBe("commit_conflict");
+    expect((err["details"] as Record<string, unknown>)["conflicts"]).toEqual([
+      {
+        key: "SHARED",
+        base: "base",
+        remote: "remote",
+        desired: "local",
+      },
+    ]);
+    expect(pushedChanges).toEqual([]);
+    expect(stagingRepo.getDesired(projectId)).toEqual({
+      SHARED: "local",
+      ONLY_REMOTE: "base",
+    });
+  });
+
+  it("drops conflicting local edits with strategy=theirs and commits the rest", async () => {
+    cache.seed(projectId, { SHARED: "base", KEEP: "same" }, 111);
+    remoteState = { SHARED: "remote", KEEP: "same" };
+    stagingRepo.setDesired(projectId, {
+      SHARED: "local",
+      KEEP: "same",
+      ADDED: "fresh",
+    });
+
+    const res = await request(`${commitBase}/v1/projects/${projectId}/commit`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${commitToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ strategy: "theirs" }),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(await res.body.json()).toEqual({
+      applied: {
+        upserts: { ADDED: "fresh" },
+        deletes: [],
+      },
+      commitId: null,
+    });
+    expect(pushedChanges).toEqual([
+      {
+        upserts: { ADDED: "fresh" },
+        deletes: [],
+      },
+    ]);
+    expect(remoteState).toEqual({
+      SHARED: "remote",
+      KEEP: "same",
+      ADDED: "fresh",
+    });
+  });
+
+  it("keeps conflicting local edits with strategy=ours", async () => {
+    cache.seed(projectId, { SHARED: "base", KEEP: "same" }, 111);
+    remoteState = { SHARED: "remote", KEEP: "same" };
+    stagingRepo.setDesired(projectId, {
+      SHARED: "local",
+      KEEP: "same",
+      ADDED: "fresh",
+    });
+
+    const res = await request(`${commitBase}/v1/projects/${projectId}/commit`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${commitToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ strategy: "ours" }),
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(await res.body.json()).toEqual({
+      applied: {
+        upserts: { SHARED: "local", ADDED: "fresh" },
+        deletes: [],
+      },
+      commitId: null,
+    });
+    expect(remoteState).toEqual({
+      SHARED: "local",
+      KEEP: "same",
+      ADDED: "fresh",
+    });
+  });
+
+  it("surfaces provider push failures", async () => {
+    cache.seed(projectId, { VALUE: "base" }, 111);
+    remoteState = { VALUE: "base" };
+    pushMode = "throw";
+    stagingRepo.setDesired(projectId, { VALUE: "local" });
+
+    const res = await request(`${commitBase}/v1/projects/${projectId}/commit`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${commitToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ strategy: "ours" }),
+    });
+
+    expect(res.statusCode).toBe(500);
+    const body = (await res.body.json()) as Record<string, unknown>;
+    const err = body["error"] as Record<string, unknown>;
+    expect(err["code"]).toBe("provider_unreachable");
+    expect(stagingRepo.getDesired(projectId)).toEqual({ VALUE: "local" });
+  });
+
+  it("returns 409 when provider.push reports a conflict", async () => {
+    cache.seed(projectId, { VALUE: "base" }, 111);
+    remoteState = { VALUE: "base" };
+    pushMode = "conflict";
+    stagingRepo.setDesired(projectId, { VALUE: "local" });
+
+    const res = await request(`${commitBase}/v1/projects/${projectId}/commit`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${commitToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ strategy: "ours" }),
+    });
+
+    expect(res.statusCode).toBe(409);
+    const body = (await res.body.json()) as Record<string, unknown>;
+    const err = body["error"] as Record<string, unknown>;
+    expect(err["code"]).toBe("commit_conflict");
+    expect((err["details"] as Record<string, unknown>)["remote"]).toEqual({
+      VALUE: "base",
+    });
+    expect(stagingRepo.getDesired(projectId)).toEqual({ VALUE: "local" });
   });
 });
 

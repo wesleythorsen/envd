@@ -18,10 +18,12 @@ import {
 import { mountPath } from "../../shared/paths.js";
 import { providers, findProvider } from "../../providers/registry.js";
 import type {
+  ChangeSet,
   KeychainAdapter,
   Provider,
   ProviderContext,
   ProviderInstance,
+  PushResult,
   SecretMap,
 } from "../../providers/base.js";
 import {
@@ -517,6 +519,26 @@ async function refreshProjectSecrets(
   );
 }
 
+async function readBaselineProjectSecrets(
+  projectId: string,
+  providerInstanceId: string | null,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+  cache: Cache<SecretMap>,
+): Promise<CacheResult<SecretMap>> {
+  return await cache.get(
+    projectId,
+    () =>
+      fetchProjectSecrets(
+        projectId,
+        providerInstanceId,
+        providerInstanceRepo,
+        keychain,
+      ),
+    { ttlMs: Number.MAX_SAFE_INTEGER },
+  );
+}
+
 async function handleGetProjectDiff(
   req: IncomingMessage,
   res: ServerResponse,
@@ -575,10 +597,173 @@ function parseProjectPullBody(body: unknown): { force: boolean } {
   return { force: force === true };
 }
 
-function hasStagedChanges(
-  desired: StagedDesiredMap | undefined,
-): desired is StagedDesiredMap {
-  return desired !== undefined && Object.keys(desired).length > 0;
+interface ParsedProjectCommitBody {
+  readonly message?: string;
+  readonly strategy: "abort" | "theirs" | "ours";
+}
+
+function parseProjectCommitBody(body: unknown): ParsedProjectCommitBody {
+  if (!isRecord(body)) {
+    throw new DEnvError("request body must be a JSON object", {
+      code: "usage_error",
+    });
+  }
+
+  const message = body["message"];
+  if (message !== undefined && typeof message !== "string") {
+    throw new DEnvError("message must be a string when provided", {
+      code: "usage_error",
+    });
+  }
+  const parsedMessage = typeof message === "string" ? message : undefined;
+
+  const strategy = body["strategy"];
+  if (strategy === undefined) {
+    return parsedMessage === undefined
+      ? { strategy: "abort" }
+      : { message: parsedMessage, strategy: "abort" };
+  }
+  if (strategy !== "abort" && strategy !== "theirs" && strategy !== "ours") {
+    throw new DEnvError("strategy must be one of abort, theirs, or ours", {
+      code: "usage_error",
+    });
+  }
+
+  return parsedMessage === undefined
+    ? { strategy }
+    : { message: parsedMessage, strategy };
+}
+
+function secretValue(map: SecretMap, key: string): string | null {
+  return Object.prototype.hasOwnProperty.call(map, key)
+    ? (map[key] ?? null)
+    : null;
+}
+
+interface CommitConflictEntry {
+  readonly key: string;
+  readonly base: string | null;
+  readonly remote: string | null;
+  readonly desired: string | null;
+}
+
+function findCommitConflicts(
+  base: SecretMap,
+  remote: SecretMap,
+  desired: SecretMap,
+): readonly CommitConflictEntry[] {
+  const keys = new Set([
+    ...Object.keys(base),
+    ...Object.keys(remote),
+    ...Object.keys(desired),
+  ]);
+  const conflicts: CommitConflictEntry[] = [];
+
+  for (const key of [...keys].sort()) {
+    const baseValue = secretValue(base, key);
+    const remoteValue = secretValue(remote, key);
+    const desiredValue = secretValue(desired, key);
+    const localChanged = desiredValue !== baseValue;
+    const remoteChanged = remoteValue !== baseValue;
+    if (localChanged && remoteChanged && desiredValue !== remoteValue) {
+      conflicts.push({
+        key,
+        base: baseValue,
+        remote: remoteValue,
+        desired: desiredValue,
+      });
+    }
+  }
+
+  return conflicts;
+}
+
+function applyTheirsStrategy(
+  desired: SecretMap,
+  conflicts: readonly CommitConflictEntry[],
+): SecretMap {
+  const resolved: Record<string, string> = { ...desired };
+  for (const conflict of conflicts) {
+    if (conflict.remote === null) {
+      delete resolved[conflict.key];
+    } else {
+      resolved[conflict.key] = conflict.remote;
+    }
+  }
+  return resolved;
+}
+
+function toChangeSet(remote: SecretMap, desired: SecretMap): ChangeSet {
+  const diff = diffSecrets(remote, desired);
+  const upserts: Record<string, string> = { ...diff.added };
+  for (const [key, value] of Object.entries(diff.modified)) {
+    upserts[key] = value.after;
+  }
+  return {
+    upserts,
+    deletes: Object.keys(diff.deleted).sort(),
+  };
+}
+
+function isEmptyChangeSet(changes: ChangeSet): boolean {
+  return (
+    Object.keys(changes.upserts).length === 0 && changes.deletes.length === 0
+  );
+}
+
+async function pushProjectChanges(
+  projectId: string,
+  providerInstanceId: string | null,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+  changes: ChangeSet,
+): Promise<PushResult> {
+  if (providerInstanceId === null) {
+    throw new DEnvError("project has no provider instance", {
+      code: "usage_error",
+      details: { projectId },
+    });
+  }
+
+  const repo = requireProviderInstanceRepo(providerInstanceRepo);
+  const keychainAdapter = requireKeychain(keychain);
+  const record = repo.get(providerInstanceId);
+  if (record === undefined) {
+    throw new DEnvError("provider instance not found", {
+      code: "provider_unreachable",
+      details: { providerInstanceId },
+    });
+  }
+
+  const provider = findProvider(record.provider);
+  if (provider === undefined) {
+    throw new DEnvError("provider is not registered", {
+      code: "usage_error",
+      details: { provider: record.provider },
+    });
+  }
+
+  try {
+    const instance: ProviderInstance = await provider.create(
+      providerContext(keychainAdapter, record.id, provider.name),
+      parseStoredConfig(record),
+    );
+    try {
+      return await instance.push(changes);
+    } finally {
+      if (instance.close !== undefined) {
+        await instance.close();
+      }
+    }
+  } catch (err: unknown) {
+    if (err instanceof DEnvError) {
+      throw err;
+    }
+    throw new DEnvError("provider is unreachable", {
+      code: "provider_unreachable",
+      cause: err,
+    });
+  }
 }
 
 async function handlePullProject(
@@ -601,7 +786,7 @@ async function handlePullProject(
 
   const input = parseProjectPullBody(await readJsonBody(req));
   const desired = staging.getDesired(id);
-  if (hasStagedChanges(desired) && !input.force) {
+  if (desired !== undefined && !input.force) {
     writeJsonError(
       res,
       409,
@@ -621,6 +806,111 @@ async function handlePullProject(
     cache,
   );
   writeJson(res, 200, { snapshotFetchedAt: snapshot.fetchedAt });
+}
+
+async function handleCommitProject(
+  req: IncomingMessage,
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  stagingRepo: StagingRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+  cache: Cache<SecretMap>,
+  id: string,
+): Promise<void> {
+  const projects = requireProjectRepo(projectRepo);
+  const staging = requireStagingRepo(stagingRepo);
+  const project = projects.get(id);
+  if (project === undefined) {
+    writeJsonError(res, 404, "not_found", "Project not found");
+    return;
+  }
+
+  const input = parseProjectCommitBody(await readJsonBody(req));
+  const stagedDesired = staging.getDesired(id);
+  if (stagedDesired === undefined) {
+    await refreshProjectSecrets(
+      id,
+      project.providerInstanceId,
+      providerInstanceRepo,
+      keychain,
+      cache,
+    );
+    writeJson(res, 200, {
+      applied: { upserts: {}, deletes: [] },
+      commitId: null,
+    });
+    return;
+  }
+
+  const desired = stagedDesiredToSecretMap(stagedDesired);
+  const baseline = await readBaselineProjectSecrets(
+    id,
+    project.providerInstanceId,
+    providerInstanceRepo,
+    keychain,
+    cache,
+  );
+  const fresh = await refreshProjectSecrets(
+    id,
+    project.providerInstanceId,
+    providerInstanceRepo,
+    keychain,
+    cache,
+  );
+
+  const conflicts = findCommitConflicts(baseline.value, fresh.value, desired);
+  if (conflicts.length > 0 && input.strategy === "abort") {
+    writeJsonError(
+      res,
+      409,
+      "commit_conflict",
+      "Commit conflicts detected; retry with strategy='ours' or strategy='theirs'",
+      {
+        strategy: input.strategy,
+        conflicts,
+      },
+    );
+    return;
+  }
+
+  const finalDesired =
+    input.strategy === "theirs"
+      ? applyTheirsStrategy(desired, conflicts)
+      : desired;
+  const changes = toChangeSet(fresh.value, finalDesired);
+
+  if (isEmptyChangeSet(changes)) {
+    staging.clear(id);
+    cache.invalidate(id);
+    writeJson(res, 200, { applied: changes, commitId: null });
+    return;
+  }
+
+  const result = await pushProjectChanges(
+    id,
+    project.providerInstanceId,
+    providerInstanceRepo,
+    keychain,
+    changes,
+  );
+  if (result.status === "conflict") {
+    writeJsonError(
+      res,
+      409,
+      "commit_conflict",
+      "Provider reported a conflict while applying changes",
+      {
+        strategy: input.strategy,
+        remote: result.remote,
+      },
+    );
+    return;
+  }
+
+  staging.clear(id);
+  cache.invalidate(id);
+  writeJson(res, 200, { applied: result.applied, commitId: null });
 }
 
 function handleDeleteProject(
@@ -1221,6 +1511,39 @@ function dispatch(
 
     if (method === "POST") {
       void handlePullProject(
+        req,
+        res,
+        projectRepo,
+        providerInstanceRepo,
+        stagingRepo,
+        keychain,
+        cache,
+        projectId,
+      ).catch((err: unknown) => {
+        writeErrorFromUnknown(res, err);
+      });
+      return;
+    }
+
+    writeJsonError(
+      res,
+      405,
+      "method_not_allowed",
+      `Method ${method} not allowed on ${path}`,
+    );
+    return;
+  }
+
+  const projectCommitMatch = /^\/v1\/projects\/([^/]+)\/commit$/.exec(path);
+  if (projectCommitMatch !== null) {
+    const projectId = projectCommitMatch[1];
+    if (projectId === undefined) {
+      writeJsonError(res, 404, "not_found", `No route for ${method} ${path}`);
+      return;
+    }
+
+    if (method === "POST") {
+      void handleCommitProject(
         req,
         res,
         projectRepo,
