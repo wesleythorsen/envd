@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { createLogger } from "../../shared/logger.js";
 import { DEnvError, type ErrorCode } from "../../shared/errors.js";
 import type { ProjectRepo } from "../../core/project.js";
+import { createCache, type Cache, type CacheResult } from "../../core/cache.js";
 import type { StagedDesiredMap, StagingRepo } from "../../core/staging.js";
 import {
   ProviderInstanceRepo,
@@ -42,6 +43,7 @@ const PKG_VERSION = pkg.version as string;
 const log = createLogger("daemon/control");
 
 const START_TIME = Date.now();
+const DEFAULT_CACHE_TTL_MS = 60_000;
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -65,6 +67,7 @@ export interface ControlServerOpts {
   providerInstanceRepo?: ProviderInstanceRepo;
   stagingRepo?: StagingRepo;
   keychain?: KeychainAdapter;
+  cache?: Cache<SecretMap>;
 }
 
 export interface ControlServerHandle {
@@ -454,6 +457,66 @@ async function fetchProjectSecrets(
   }
 }
 
+function readCacheTtlMs(config: unknown): number {
+  if (!isRecord(config)) {
+    return DEFAULT_CACHE_TTL_MS;
+  }
+
+  const raw = config["cacheTtlMs"] ?? config["ttlMs"];
+  if (raw === undefined) {
+    return DEFAULT_CACHE_TTL_MS;
+  }
+
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+    throw new DEnvError(
+      "provider instance cache TTL must be a non-negative number",
+      {
+        code: "internal",
+      },
+    );
+  }
+
+  return raw;
+}
+
+async function refreshProjectSecrets(
+  projectId: string,
+  providerInstanceId: string | null,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+  cache: Cache<SecretMap>,
+): Promise<CacheResult<SecretMap>> {
+  if (providerInstanceId === null) {
+    throw new DEnvError("project has no provider instance", {
+      code: "usage_error",
+      details: { projectId },
+    });
+  }
+
+  const repo = requireProviderInstanceRepo(providerInstanceRepo);
+  const record = repo.get(providerInstanceId);
+  if (record === undefined) {
+    throw new DEnvError("provider instance not found", {
+      code: "provider_unreachable",
+      details: { providerInstanceId },
+    });
+  }
+
+  const ttlMs = readCacheTtlMs(parseStoredConfig(record));
+  cache.invalidate(projectId);
+  return await cache.get(
+    projectId,
+    () =>
+      fetchProjectSecrets(
+        projectId,
+        providerInstanceId,
+        providerInstanceRepo,
+        keychain,
+      ),
+    { ttlMs },
+  );
+}
+
 async function handleGetProjectDiff(
   req: IncomingMessage,
   res: ServerResponse,
@@ -493,6 +556,71 @@ async function handleGetProjectDiff(
   const diff = diffSecrets(remote, stagedDesiredToSecretMap(desired));
   const keys = toSecretDiffKeys(diff);
   writeJson(res, 200, includeValues ? { keys, values: diff } : { keys });
+}
+
+function parseProjectPullBody(body: unknown): { force: boolean } {
+  if (!isRecord(body)) {
+    throw new DEnvError("request body must be a JSON object", {
+      code: "usage_error",
+    });
+  }
+
+  const force = body["force"];
+  if (force !== undefined && typeof force !== "boolean") {
+    throw new DEnvError("force must be a boolean", {
+      code: "usage_error",
+    });
+  }
+
+  return { force: force === true };
+}
+
+function hasStagedChanges(
+  desired: StagedDesiredMap | undefined,
+): desired is StagedDesiredMap {
+  return desired !== undefined && Object.keys(desired).length > 0;
+}
+
+async function handlePullProject(
+  req: IncomingMessage,
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  stagingRepo: StagingRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+  cache: Cache<SecretMap>,
+  id: string,
+): Promise<void> {
+  const projects = requireProjectRepo(projectRepo);
+  const staging = requireStagingRepo(stagingRepo);
+  const project = projects.get(id);
+  if (project === undefined) {
+    writeJsonError(res, 404, "not_found", "Project not found");
+    return;
+  }
+
+  const input = parseProjectPullBody(await readJsonBody(req));
+  const desired = staging.getDesired(id);
+  if (hasStagedChanges(desired) && !input.force) {
+    writeJsonError(
+      res,
+      409,
+      "commit_conflict",
+      "Project has staged changes; pass force=true to discard them",
+      { projectId: id, stagedKeys: Object.keys(desired).sort() },
+    );
+    return;
+  }
+
+  staging.clear(id);
+  const snapshot = await refreshProjectSecrets(
+    id,
+    project.providerInstanceId,
+    providerInstanceRepo,
+    keychain,
+    cache,
+  );
+  writeJson(res, 200, { snapshotFetchedAt: snapshot.fetchedAt });
 }
 
 function handleDeleteProject(
@@ -917,6 +1045,7 @@ function dispatch(
   providerInstanceRepo: ProviderInstanceRepo | undefined,
   stagingRepo: StagingRepo | undefined,
   keychain: KeychainAdapter | undefined,
+  cache: Cache<SecretMap>,
   req: IncomingMessage,
   res: ServerResponse,
 ): void {
@@ -1082,6 +1211,39 @@ function dispatch(
     return;
   }
 
+  const projectPullMatch = /^\/v1\/projects\/([^/]+)\/pull$/.exec(path);
+  if (projectPullMatch !== null) {
+    const projectId = projectPullMatch[1];
+    if (projectId === undefined) {
+      writeJsonError(res, 404, "not_found", `No route for ${method} ${path}`);
+      return;
+    }
+
+    if (method === "POST") {
+      void handlePullProject(
+        req,
+        res,
+        projectRepo,
+        providerInstanceRepo,
+        stagingRepo,
+        keychain,
+        cache,
+        projectId,
+      ).catch((err: unknown) => {
+        writeErrorFromUnknown(res, err);
+      });
+      return;
+    }
+
+    writeJsonError(
+      res,
+      405,
+      "method_not_allowed",
+      `Method ${method} not allowed on ${path}`,
+    );
+    return;
+  }
+
   const projectMatch = /^\/v1\/projects\/([^/]+)$/.exec(path);
   if (projectMatch !== null) {
     const projectId = projectMatch[1];
@@ -1139,6 +1301,7 @@ export function startControlServer(
   const projectRepo = opts.projectRepo;
   const providerInstanceRepo = opts.providerInstanceRepo;
   const stagingRepo = opts.stagingRepo;
+  const cache = opts.cache ?? createCache<SecretMap>();
   const keychain =
     opts.keychain ??
     (providerInstanceRepo === undefined ? undefined : createKeychainAdapter());
@@ -1153,6 +1316,7 @@ export function startControlServer(
         providerInstanceRepo,
         stagingRepo,
         keychain,
+        cache,
         req,
         res,
       );

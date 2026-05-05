@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { request } from "undici";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,8 +10,10 @@ import {
 } from "../../src/daemon/control/server.js";
 import { openState, type StateStore } from "../../src/core/state.js";
 import { ProjectRepo } from "../../src/core/project.js";
+import type { Cache } from "../../src/core/cache.js";
 import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
 import { StagingRepo } from "../../src/core/staging.js";
+import type { SecretMap } from "../../src/providers/base.js";
 
 const TOKEN = generateToken();
 
@@ -356,6 +358,148 @@ describe("GET /v1/projects/:id/diff", () => {
         deleted: { DELETED: "gone" },
       },
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /v1/projects/:id/pull
+// ---------------------------------------------------------------------------
+
+describe("POST /v1/projects/:id/pull", () => {
+  const pullToken = generateToken();
+  let pullServer: ControlServerHandle;
+  let pullBase: string;
+  let state: StateStore;
+  let tempDir: string;
+  let providerFile: string;
+  let stagingRepo: StagingRepo;
+  let conflictProjectId: string;
+  let forceProjectId: string;
+  let cacheEvents: string[] = [];
+  let fetchedValues: SecretMap[] = [];
+  let nextFetchedAt = 123_456;
+
+  const cache: Cache<SecretMap> = {
+    async get(projectId, fetcher) {
+      cacheEvents.push(`get:${projectId}`);
+      const value = await fetcher();
+      fetchedValues.push(value);
+      return { value, fetchedAt: nextFetchedAt++ };
+    },
+    invalidate(projectId) {
+      cacheEvents.push(`invalidate:${projectId}`);
+    },
+  };
+
+  beforeAll(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "d-env-control-pull-"));
+    providerFile = join(tempDir, "secrets.json");
+    const conflictProjectPath = join(tempDir, "conflict-project");
+    const forceProjectPath = join(tempDir, "force-project");
+    mkdirSync(conflictProjectPath);
+    mkdirSync(forceProjectPath);
+    writeFileSync(providerFile, JSON.stringify({ REMOTE: "initial" }), "utf-8");
+
+    state = openState(join(tempDir, "state.db"));
+    const projectRepo = new ProjectRepo(state.db);
+    const providerInstanceRepo = new ProviderInstanceRepo(state.db);
+    stagingRepo = new StagingRepo(state.db);
+    const providerInstance = providerInstanceRepo.create({
+      provider: "local-file",
+      name: "Pull fixture",
+      config: JSON.stringify({ path: providerFile }),
+    });
+    const conflictProject = projectRepo.create({
+      path: conflictProjectPath,
+      providerInstanceId: providerInstance.id,
+    });
+    const forceProject = projectRepo.create({
+      path: forceProjectPath,
+      providerInstanceId: providerInstance.id,
+    });
+    stagingRepo.setDesired(conflictProject.id, { LOCAL: "pending" });
+    stagingRepo.setDesired(forceProject.id, { LOCAL: "discard" });
+    conflictProjectId = conflictProject.id;
+    forceProjectId = forceProject.id;
+
+    pullServer = await startControlServer({
+      port: 0,
+      token: pullToken,
+      projectRepo,
+      providerInstanceRepo,
+      stagingRepo,
+      cache,
+    });
+    pullBase = `http://127.0.0.1:${pullServer.port}`;
+  });
+
+  beforeEach(() => {
+    cacheEvents = [];
+    fetchedValues = [];
+    nextFetchedAt = 123_456;
+  });
+
+  afterAll(async () => {
+    await pullServer.close();
+    state.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("returns 409 and keeps staging when force is not true", async () => {
+    const res = await request(
+      `${pullBase}/v1/projects/${conflictProjectId}/pull`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${pullToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      },
+    );
+
+    expect(res.statusCode).toBe(409);
+    const body = (await res.body.json()) as Record<string, unknown>;
+    const err = body["error"] as Record<string, unknown>;
+    expect(err["code"]).toBe("commit_conflict");
+    expect(err["message"]).toEqual(expect.stringContaining("force=true"));
+    expect((err["details"] as Record<string, unknown>)["stagedKeys"]).toEqual([
+      "LOCAL",
+    ]);
+    expect(stagingRepo.getDesired(conflictProjectId)).toEqual({
+      LOCAL: "pending",
+    });
+    expect(cacheEvents).toEqual([]);
+    expect(fetchedValues).toEqual([]);
+  });
+
+  it("clears staging, invalidates cache, and fetches a fresh snapshot with force", async () => {
+    writeFileSync(
+      providerFile,
+      JSON.stringify({ REMOTE: "after-force" }),
+      "utf-8",
+    );
+
+    const res = await request(
+      `${pullBase}/v1/projects/${forceProjectId}/pull`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${pullToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ force: true }),
+      },
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(await res.body.json()).toEqual({ snapshotFetchedAt: 123_456 });
+    expect(stagingRepo.getDesired(forceProjectId)).toBeUndefined();
+    expect(cacheEvents).toEqual([
+      `invalidate:${forceProjectId}`,
+      `get:${forceProjectId}`,
+    ]);
+    expect(fetchedValues).toEqual([{ REMOTE: "after-force" }]);
   });
 });
 
