@@ -19,6 +19,12 @@ import {
   type LaunchdUninstallOptions,
   type LaunchdUninstallResult,
 } from "../launchd.js";
+import {
+  installSystemdUserService,
+  uninstallSystemdUserService,
+  type SystemdUserServiceDeps,
+  type SystemdUserServiceResult,
+} from "../systemd-user.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -73,6 +79,7 @@ interface DaemonCommandDeps {
   readonly installLaunchdAgent?: InstallLaunchdAgentFn;
   readonly uninstallLaunchdAgent?: UninstallLaunchdAgentFn;
   readonly resolveDaemonPath?: () => string;
+  readonly systemd?: SystemdUserServiceDeps;
   readonly stdout?: Writable;
   readonly stderr?: Writable;
 }
@@ -440,6 +447,16 @@ async function doInstall(
   opts: { json?: boolean },
   deps: DaemonCommandDeps,
 ): Promise<void> {
+  const platform = deps.systemd?.platform ?? process.platform;
+  if (platform === "linux") {
+    const result = await installSystemdUserService({
+      ...deps.systemd,
+      daemonPath: deps.resolveDaemonPath ?? resolveDaemonPath,
+    });
+    printSystemdResult(result, opts.json === true, deps);
+    return;
+  }
+
   const installLaunchdAgent =
     deps.installLaunchdAgent ?? defaultInstallLaunchdAgent;
   const getDaemonPath = deps.resolveDaemonPath ?? resolveDaemonPath;
@@ -457,6 +474,13 @@ async function doUninstall(
   opts: { json?: boolean },
   deps: DaemonCommandDeps,
 ): Promise<void> {
+  const platform = deps.systemd?.platform ?? process.platform;
+  if (platform === "linux") {
+    const result = await uninstallSystemdUserService(deps.systemd);
+    printSystemdResult(result, opts.json === true, deps);
+    return;
+  }
+
   const uninstallLaunchdAgent =
     deps.uninstallLaunchdAgent ?? defaultUninstallLaunchdAgent;
   const result = await uninstallLaunchdAgent();
@@ -472,6 +496,30 @@ async function doUninstall(
   }
 
   writeStdout(deps, `d-envd launchd agent uninstalled (${result.plistPath})\n`);
+}
+
+function printSystemdResult(
+  result: SystemdUserServiceResult,
+  json: boolean,
+  deps: DaemonCommandDeps,
+): void {
+  if (json) {
+    writeStdout(deps, JSON.stringify(result) + "\n");
+    return;
+  }
+
+  if (result.status === "installed") {
+    writeStdout(
+      deps,
+      `d-envd systemd user service installed and started\n  unit: ${result.unitPath}\n`,
+    );
+    return;
+  }
+
+  writeStdout(
+    deps,
+    `d-envd systemd user service stopped and uninstalled\n  unit: ${result.unitPath}\n`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -530,7 +578,7 @@ export function buildDaemonCommand(deps: DaemonCommandDeps = {}): Command {
 
   daemon
     .command("install")
-    .description("Install the daemon as a macOS launchd agent")
+    .description("Install the daemon as a launchd or systemd --user service")
     .option("--json", "JSON output")
     .action(async (opts: { json?: boolean }) => {
       try {
@@ -542,7 +590,7 @@ export function buildDaemonCommand(deps: DaemonCommandDeps = {}): Command {
 
   daemon
     .command("uninstall")
-    .description("Uninstall the macOS launchd agent")
+    .description("Uninstall the daemon service")
     .option("--json", "JSON output")
     .action(async (opts: { json?: boolean }) => {
       try {

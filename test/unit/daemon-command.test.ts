@@ -12,6 +12,12 @@ import type {
   LaunchdInstallResult,
   LaunchdUninstallResult,
 } from "../../src/cli/launchd.js";
+import type {
+  MkdirFn,
+  RemoveFn,
+  SystemdRunner,
+  WriteFileFn,
+} from "../../src/cli/systemd-user.js";
 
 const { fetchMock } = vi.hoisted(() => {
   return {
@@ -229,5 +235,102 @@ describe("daemon command launchd wiring", () => {
 
     expect(uninstallCalls).toBe(1);
     expect(parseJsonOutput(stdout)).toEqual(uninstallResult);
+  });
+});
+
+describe("daemon systemd commands", () => {
+  it("wires install through the systemd helper dependencies", async () => {
+    const systemctlCalls: string[][] = [];
+    const runSystemctl: SystemdRunner = (args) => {
+      systemctlCalls.push([...args]);
+      return Promise.resolve({ stdout: "", stderr: "", code: 0 });
+    };
+    const mkdirFn: MkdirFn = () => Promise.resolve(undefined);
+    let writtenUnit = "";
+    const writeFileFn: WriteFileFn = (_path, data) => {
+      writtenUnit = data;
+      return Promise.resolve();
+    };
+
+    const { buildDaemonCommand } = await loadDaemonModule();
+    let stdout = "";
+    const command = buildDaemonCommand({
+      resolveDaemonPath: () => "/opt/d-env/dist/daemon/main.js",
+      systemd: {
+        platform: "linux",
+        homeDir: "/home/alice",
+        nodePath: "/usr/bin/node",
+        runSystemctl,
+        mkdirFn,
+        writeFileFn,
+      },
+      stdout: {
+        write(chunk: string) {
+          stdout += chunk;
+          return true;
+        },
+      },
+    });
+
+    await command.parseAsync(["install", "--json"], { from: "user" });
+
+    expect(JSON.parse(stdout) as Record<string, unknown>).toEqual({
+      status: "installed",
+      serviceName: "d-envd.service",
+      unitPath: "/home/alice/.config/systemd/user/d-envd.service",
+    });
+    expect(writtenUnit).toContain(
+      "ExecStart=/usr/bin/node /opt/d-env/dist/daemon/main.js\n",
+    );
+    expect(systemctlCalls).toEqual([
+      ["daemon-reload"],
+      ["enable", "d-envd.service"],
+      ["start", "d-envd.service"],
+    ]);
+  });
+
+  it("wires uninstall through the systemd helper dependencies", async () => {
+    const systemctlCalls: string[][] = [];
+    const runSystemctl: SystemdRunner = (args) => {
+      systemctlCalls.push([...args]);
+      return Promise.resolve({ stdout: "", stderr: "", code: 0 });
+    };
+    const removeCalls: string[] = [];
+    const removeFn: RemoveFn = (path) => {
+      removeCalls.push(path);
+      return Promise.resolve();
+    };
+
+    const { buildDaemonCommand } = await loadDaemonModule();
+    let stdout = "";
+    const command = buildDaemonCommand({
+      systemd: {
+        platform: "linux",
+        homeDir: "/home/alice",
+        runSystemctl,
+        removeFn,
+      },
+      stdout: {
+        write(chunk: string) {
+          stdout += chunk;
+          return true;
+        },
+      },
+    });
+
+    await command.parseAsync(["uninstall"], { from: "user" });
+
+    expect(stdout).toBe(
+      "d-envd systemd user service stopped and uninstalled\n" +
+        "  unit: /home/alice/.config/systemd/user/d-envd.service\n",
+    );
+    expect(systemctlCalls).toEqual([
+      ["disable", "d-envd.service"],
+      ["stop", "d-envd.service"],
+      ["daemon-reload"],
+    ]);
+    expect(removeCalls).toEqual([
+      "/home/alice/.config/systemd/user/d-envd.service",
+    ]);
   });
 });
