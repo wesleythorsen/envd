@@ -163,10 +163,7 @@ describe("GET /v1/logs", () => {
 
   it("streams existing tail lines and new log events over SSE", async () => {
     mkdirSync(join(tempHome, "logs"), { recursive: true });
-    writeFileSync(
-      join(tempHome, "logs", "d-envd.log"),
-      '{"msg":"seed"}\n',
-    );
+    writeFileSync(join(tempHome, "logs", "d-envd.log"), '{"msg":"seed"}\n');
 
     const res = await fetch(`${base}/v1/logs?tail=1&follow=true`, {
       headers: { Authorization: `Bearer ${TOKEN}` },
@@ -1002,7 +999,7 @@ describe("/v1/providers and /v1/provider-instances", () => {
     const providersBody = (await providersRes.body.json()) as {
       providers?: readonly Record<string, unknown>[];
     };
-    expect(providersBody.providers).toHaveLength(2);
+    expect(providersBody.providers).toHaveLength(4);
     const localFile = providersBody.providers?.find(
       (provider) => provider["name"] === "local-file",
     );

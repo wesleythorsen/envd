@@ -148,19 +148,17 @@ describe("project APIs happy path", () => {
     );
 
     const status = await projectClient.getProjectStatus(created.id);
-    expect(status).toEqual({
-      providerInstanceId,
-      provider: "local-file",
-      providerInstanceName: "Project status fixture",
-      providerHealthy: true,
-      providerError: null,
-      lastFetchTime: expect.any(Number),
-      staged: {
-        added: 1,
-        modified: 1,
-        deleted: 1,
-        total: 3,
-      },
+    expect(status.providerInstanceId).toBe(providerInstanceId);
+    expect(status.provider).toBe("local-file");
+    expect(status.providerInstanceName).toBe("Project status fixture");
+    expect(status.providerHealthy).toBe(true);
+    expect(status.providerError).toBeNull();
+    expect(typeof status.lastFetchTime).toBe("number");
+    expect(status.staged).toEqual({
+      added: 1,
+      modified: 1,
+      deleted: 1,
+      total: 3,
     });
   });
 });
@@ -204,9 +202,24 @@ describe("provider APIs happy path", () => {
     expect(providers.map((provider) => provider.name)).toEqual([
       "local-file",
       "doppler",
+      "bitwarden-secret-manager",
+      "aws-secrets-manager",
     ]);
-    expect(providers[0]?.credentialKeys).toEqual([]);
-    expect(providers[1]?.credentialKeys).toEqual(["apiToken"]);
+    expect(
+      providers.find((provider) => provider.name === "local-file")
+        ?.credentialKeys,
+    ).toEqual([]);
+    expect(
+      providers.find((provider) => provider.name === "doppler")?.credentialKeys,
+    ).toEqual(["apiToken"]);
+    expect(
+      providers.find((provider) => provider.name === "bitwarden-secret-manager")
+        ?.credentialKeys,
+    ).toEqual(["accessToken"]);
+    expect(
+      providers.find((provider) => provider.name === "aws-secrets-manager")
+        ?.credentialKeys,
+    ).toEqual([]);
 
     const created = await providerClient.createProviderInstance({
       provider: "local-file",

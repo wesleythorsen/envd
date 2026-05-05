@@ -50,6 +50,9 @@
     "dist"
   ],
   "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1042.0",
+    "@aws-sdk/credential-provider-ini": "^3.972.38",
+    "@bitwarden/sdk-napi": "^1.0.0",
     "commander": "^14.0.3"
   }
 }
