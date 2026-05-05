@@ -6,6 +6,7 @@ import {
 import type { Server } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import { createLogger } from "../../shared/logger.js";
+import { safeErrorLogData } from "../../shared/log-safety.js";
 import { DEnvError } from "../../shared/errors.js";
 import type { Project, ProjectRepo } from "../../core/project.js";
 import { createCache, type Cache, type CacheResult } from "../../core/cache.js";
@@ -366,6 +367,21 @@ function parseProjectPath(path: string): ProjectPath {
   return { kind: "unknown" };
 }
 
+function webdavPathLabel(path: string): string {
+  switch (parseProjectPath(path).kind) {
+    case "root":
+      return "/";
+    case "projects-root":
+      return "/p/";
+    case "project-dir":
+      return "/p/:project/";
+    case "project-env":
+      return "/p/:project/.env";
+    case "unknown":
+      return path.startsWith("/p/") ? "/p/*" : "/*";
+  }
+}
+
 function loadProject(
   projectRepo: ProjectRepo,
   id: string,
@@ -682,7 +698,7 @@ function handleMethodNotAllowed(res: ServerResponse): void {
 function handleBadDotenv(res: ServerResponse, err: unknown): void {
   log.warn({
     msg: "webdav dotenv parse failed",
-    data: { error: String(err) },
+    data: safeErrorLogData(err),
   });
 
   const body = Buffer.from("Bad .env", "utf-8");
@@ -697,7 +713,7 @@ function handleBadDotenv(res: ServerResponse, err: unknown): void {
 function handleProviderUnavailable(res: ServerResponse, err: unknown): void {
   log.warn({
     msg: "webdav provider read failed",
-    data: { error: String(err) },
+    data: safeErrorLogData(err),
   });
 
   const body = Buffer.from("Provider Unreachable", "utf-8");
@@ -712,7 +728,7 @@ function handleProviderUnavailable(res: ServerResponse, err: unknown): void {
 function handleInternalError(res: ServerResponse, err: unknown): void {
   log.error({
     msg: "webdav internal error",
-    data: { error: String(err) },
+    data: safeErrorLogData(err),
   });
 
   const body = Buffer.from("Internal Server Error", "utf-8");
@@ -748,7 +764,10 @@ async function dispatch(
   const path = parsePath(req.url);
   const projectRepo = runtime.projectRepo;
 
-  log.debug({ msg: "webdav request", data: { method, path } });
+  log.debug({
+    msg: "webdav request",
+    data: { method, path: webdavPathLabel(path) },
+  });
 
   if (method === "OPTIONS") {
     // macOS probes both OPTIONS / and OPTIONS *
@@ -862,7 +881,7 @@ export function startWebdavServer(
         } else {
           log.error({
             msg: "webdav request failed after headers were sent",
-            data: { error: String(err) },
+            data: safeErrorLogData(err),
           });
           res.destroy(err instanceof Error ? err : undefined);
         }

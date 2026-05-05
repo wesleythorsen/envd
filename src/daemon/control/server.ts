@@ -8,6 +8,7 @@ import { timingSafeEqual, randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 import { readLogTail } from "../../shared/log-file.js";
 import { createLogger, subscribeLogLines } from "../../shared/logger.js";
+import { safeErrorLogData } from "../../shared/log-safety.js";
 import { DEnvError, type ErrorCode } from "../../shared/errors.js";
 import type { ProjectRepo } from "../../core/project.js";
 import { createCache, type Cache, type CacheResult } from "../../core/cache.js";
@@ -1192,7 +1193,7 @@ async function cleanupCreatedProviderInstance(
   } catch (err: unknown) {
     log.error({
       msg: "failed to clean up provider instance after create failure",
-      data: { providerInstanceId: record.id, error: String(err) },
+      data: { providerInstanceId: record.id, ...safeErrorLogData(err) },
     });
   }
 }
@@ -1342,6 +1343,41 @@ function parsePath(rawUrl: string | undefined): string {
   }
 }
 
+function controlPathLabel(path: string): string {
+  if (
+    path === "/v1/health" ||
+    path === "/v1/version" ||
+    path === "/v1/shutdown" ||
+    path === "/v1/logs" ||
+    path === "/v1/projects" ||
+    path === "/v1/providers" ||
+    path === "/v1/provider-instances"
+  ) {
+    return path;
+  }
+
+  if (/^\/v1\/projects\/[^/]+$/.test(path)) {
+    return "/v1/projects/:id";
+  }
+
+  const projectAction = /^\/v1\/projects\/[^/]+\/(diff|pull|commit)$/.exec(
+    path,
+  );
+  if (projectAction !== null) {
+    return `/v1/projects/:id/${projectAction[1]}`;
+  }
+
+  if (/^\/v1\/provider-instances\/[^/]+$/.test(path)) {
+    return "/v1/provider-instances/:id";
+  }
+
+  if (/^\/v1\/provider-instances\/[^/]+\/test$/.test(path)) {
+    return "/v1/provider-instances/:id/test";
+  }
+
+  return "/v1/*";
+}
+
 type RouteKey = string; // "METHOD /path"
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
@@ -1400,7 +1436,10 @@ function dispatch(
   const method = req.method ?? "";
   const path = parsePath(req.url);
 
-  log.debug({ msg: "control request", data: { method, path } });
+  log.debug({
+    msg: "control request",
+    data: { method, path: controlPathLabel(path) },
+  });
 
   // Auth gate — all endpoints require a valid bearer token.
   if (!requireAuth(req, res, token)) {
