@@ -8,6 +8,7 @@ const DEFAULT_FORMAT_CONFIG = JSON.stringify({
   quote: "when-needed",
   sortKeys: "alphabetical",
 });
+const MISSING_PROJECT_TOKEN = "0".repeat(64);
 
 export interface Project {
   readonly id: string;
@@ -158,10 +159,10 @@ export class ProjectRepo {
 
   getByToken(id: string, token: string): Project | undefined {
     const project = this.get(id);
-    if (project === undefined) {
-      return undefined;
-    }
-    return tokensEqual(project.token, token) ? project : undefined;
+    const candidateToken = project?.token ?? MISSING_PROJECT_TOKEN;
+    return project !== undefined && tokensEqual(candidateToken, token)
+      ? project
+      : undefined;
   }
 
   list(): readonly Project[] {

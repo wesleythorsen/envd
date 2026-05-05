@@ -374,6 +374,18 @@ function loadProject(
   return projectRepo.getByToken(id, token);
 }
 
+function requireProjectAuth(
+  projectRepo: ProjectRepo,
+  path: string,
+  kind: "project-dir" | "project-env",
+): Project | undefined {
+  const parsedPath = parseProjectPath(path);
+  if (parsedPath.kind !== kind) {
+    return undefined;
+  }
+  return loadProject(projectRepo, parsedPath.id, parsedPath.token);
+}
+
 async function handlePropfind(
   req: IncomingMessage,
   res: ServerResponse,
@@ -405,10 +417,9 @@ async function handlePropfind(
       }
       break;
     case "project-dir": {
-      const project = loadProject(projectRepo, parsedPath.id, parsedPath.token);
+      const project = requireProjectAuth(projectRepo, path, "project-dir");
       if (project === undefined) {
-        res.writeHead(404, { "Content-Length": "0" });
-        res.end();
+        handleNotFound(res);
         return;
       }
       const href = `/p/${project.id}.${project.token}/`;
@@ -422,10 +433,9 @@ async function handlePropfind(
       break;
     }
     case "project-env": {
-      const project = loadProject(projectRepo, parsedPath.id, parsedPath.token);
+      const project = requireProjectAuth(projectRepo, path, "project-env");
       if (project === undefined) {
-        res.writeHead(404, { "Content-Length": "0" });
-        res.end();
+        handleNotFound(res);
         return;
       }
       body += davResponse(
@@ -435,8 +445,7 @@ async function handlePropfind(
       break;
     }
     case "unknown":
-      res.writeHead(404, { "Content-Length": "0" });
-      res.end();
+      handleNotFound(res);
       return;
   }
 
@@ -761,82 +770,62 @@ async function dispatch(
   }
 
   if (method === "PUT") {
-    const parsedPath = parseProjectPath(path);
-    if (parsedPath.kind === "project-env") {
-      const project = loadProject(projectRepo, parsedPath.id, parsedPath.token);
-      if (project !== undefined) {
-        try {
-          await handlePut(req, res, runtime, project);
-        } catch (err: unknown) {
-          if (err instanceof DEnvError && err.code === "bad_dotenv") {
-            handleBadDotenv(res, err);
-          } else {
-            handleInternalError(res, err);
-          }
+    const project = requireProjectAuth(projectRepo, path, "project-env");
+    if (project !== undefined) {
+      try {
+        await handlePut(req, res, runtime, project);
+      } catch (err: unknown) {
+        if (err instanceof DEnvError && err.code === "bad_dotenv") {
+          handleBadDotenv(res, err);
+        } else {
+          handleInternalError(res, err);
         }
-        return;
       }
-      handleNotFound(res);
-    } else {
-      handleNotFound(res);
+      return;
     }
+    handleNotFound(res);
     return;
   }
 
   if (method === "LOCK") {
-    const parsedPath = parseProjectPath(path);
-    if (parsedPath.kind === "project-env") {
-      const project = loadProject(projectRepo, parsedPath.id, parsedPath.token);
-      if (project !== undefined) {
-        try {
-          await handleLock(req, res, runtime, path);
-        } catch (err: unknown) {
-          handleInternalError(res, err);
-        }
-        return;
+    const project = requireProjectAuth(projectRepo, path, "project-env");
+    if (project !== undefined) {
+      try {
+        await handleLock(req, res, runtime, path);
+      } catch (err: unknown) {
+        handleInternalError(res, err);
       }
-      handleNotFound(res);
-    } else {
-      handleNotFound(res);
+      return;
     }
+    handleNotFound(res);
     return;
   }
 
   if (method === "UNLOCK") {
-    const parsedPath = parseProjectPath(path);
-    if (parsedPath.kind === "project-env") {
-      const project = loadProject(projectRepo, parsedPath.id, parsedPath.token);
-      if (project !== undefined) {
-        handleUnlock(req, res, runtime, path);
-        return;
-      }
-      handleNotFound(res);
-    } else {
-      handleNotFound(res);
+    const project = requireProjectAuth(projectRepo, path, "project-env");
+    if (project !== undefined) {
+      handleUnlock(req, res, runtime, path);
+      return;
     }
+    handleNotFound(res);
     return;
   }
 
   if (method === "GET" || method === "HEAD") {
-    const parsedPath = parseProjectPath(path);
-    if (parsedPath.kind === "project-env") {
-      const project = loadProject(projectRepo, parsedPath.id, parsedPath.token);
-      if (project !== undefined) {
-        try {
-          await handleGet(req, res, runtime, project, method === "GET");
-        } catch (err: unknown) {
-          if (err instanceof ProviderUnavailableError) {
-            handleProviderUnavailable(res, err);
-          } else {
-            handleInternalError(res, err);
-          }
+    const project = requireProjectAuth(projectRepo, path, "project-env");
+    if (project !== undefined) {
+      try {
+        await handleGet(req, res, runtime, project, method === "GET");
+      } catch (err: unknown) {
+        if (err instanceof ProviderUnavailableError) {
+          handleProviderUnavailable(res, err);
+        } else {
+          handleInternalError(res, err);
         }
-        return;
       }
-      handleNotFound(res);
-    } else {
-      handleNotFound(res);
+      return;
     }
+    handleNotFound(res);
     return;
   }
 

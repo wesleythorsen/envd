@@ -410,13 +410,13 @@ describe("404 for unknown paths", () => {
   it("GET /nonexistent → 404", async () => {
     const res = await request(`${base}/nonexistent`);
     expect(res.statusCode).toBe(404);
-    await res.body.dump();
+    expect(await res.body.text()).toBe("Not Found");
   });
 
   it("GET project other.env → 404", async () => {
     const res = await request(`${base}${projectHref}/other.env`);
     expect(res.statusCode).toBe(404);
-    await res.body.dump();
+    expect(await res.body.text()).toBe("Not Found");
   });
 
   it("PROPFIND /nonexistent → 404", async () => {
@@ -425,7 +425,45 @@ describe("404 for unknown paths", () => {
       headers: { depth: "0" },
     });
     expect(res.statusCode).toBe(404);
-    await res.body.dump();
+    expect(await res.body.text()).toBe("Not Found");
+  });
+
+  it("uses the same 404 response for malformed or unauthorized project paths", async () => {
+    const cases: Array<{
+      method: "GET" | "PUT" | "PROPFIND" | "LOCK" | "UNLOCK";
+      path: string;
+      headers?: Record<string, string>;
+      body?: string;
+    }> = [
+      { method: "GET", path: `${projectHref}/other.env` },
+      { method: "GET", path: `/p/${project.id}.wrong/.env` },
+      { method: "GET", path: `/p/unknown.${project.token}/.env` },
+      { method: "PUT", path: `/p/${project.id}.wrong/.env`, body: "IGNORED=1\n" },
+      {
+        method: "PROPFIND",
+        path: `/p/${project.id}.wrong/.env`,
+        headers: { depth: "0" },
+      },
+      { method: "LOCK", path: `/p/${project.id}.wrong/.env`, body: "" },
+      {
+        method: "UNLOCK",
+        path: `/p/${project.id}.wrong/.env`,
+        headers: { "Lock-Token": "<opaquelocktoken:test>" },
+      },
+      { method: "GET", path: "/p/%2E%2E/.env" },
+      { method: "GET", path: "/p/not-a-project" },
+    ];
+
+    for (const testCase of cases) {
+      const res = await request(`${base}${testCase.path}`, {
+        method: testCase.method,
+        headers: testCase.headers,
+        body: testCase.body,
+      });
+      expect(res.statusCode).toBe(404);
+      expect(await res.body.text()).toBe("Not Found");
+      expect(res.headers["x-denv-error"]).toBeUndefined();
+    }
   });
 });
 
