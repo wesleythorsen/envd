@@ -49,6 +49,7 @@ function fakeClient(): ControlClient & {
       diffCalls.push(id);
       return Promise.resolve(diffResult);
     },
+    commitProject: () => Promise.reject(new Error("not needed")),
     pullProject: (id, opts) => {
       pullCalls.push({ id, force: opts?.force });
       return Promise.resolve(pullResult);

@@ -44,6 +44,10 @@ class FakeControlClient implements ControlClient {
     return Promise.reject(new Error("not needed"));
   }
 
+  commitProject(): Promise<never> {
+    return Promise.reject(new Error("not needed"));
+  }
+
   pullProject(): Promise<never> {
     return Promise.reject(new Error("not needed"));
   }

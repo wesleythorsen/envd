@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fetch } from "undici";
 import { DEnvError } from "../shared/errors.js";
 import * as paths from "../shared/paths.js";
+import type { ChangeSet } from "../providers/base.js";
 import type { JSONSchema } from "../providers/base.js";
 import type { SecretDiff, SecretDiffKeys } from "../kinds/secrets/diff.js";
 
@@ -22,6 +23,10 @@ export interface ControlClient {
     id: string,
     opts?: ProjectDiffOptions,
   ): Promise<ProjectDiffResult>;
+  commitProject(
+    id: string,
+    opts?: ProjectCommitOptions,
+  ): Promise<ProjectCommitResult>;
   pullProject(
     id: string,
     opts?: ProjectPullOptions,
@@ -79,6 +84,18 @@ export interface ProjectDiffResult {
 
 export interface ProjectPullOptions {
   readonly force?: boolean;
+}
+
+export type ProjectCommitStrategy = "abort" | "theirs" | "ours";
+
+export interface ProjectCommitOptions {
+  readonly message?: string;
+  readonly strategy?: ProjectCommitStrategy;
+}
+
+export interface ProjectCommitResult {
+  readonly applied: ChangeSet;
+  readonly commitId: string | null;
 }
 
 export interface ProjectPullResult {
@@ -204,6 +221,24 @@ function isConnRefused(err: unknown): boolean {
   return false;
 }
 
+function parseErrorDetails(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function throwApiError(
+  message: string,
+  code: import("../shared/errors.js").ErrorCode,
+  details?: Record<string, unknown>,
+): never {
+  if (details === undefined) {
+    throw new DEnvError(message, { code });
+  }
+  throw new DEnvError(message, { code, details });
+}
+
 /**
  * Executes one fetch call with a timeout and standard auth header.
  * Handles error-mapping centrally so each method stays minimal.
@@ -266,7 +301,9 @@ async function apiGet<T>(
     typeof errBody === "object" &&
     errBody !== null &&
     "error" in errBody
-      ? (errBody as { error: { code?: unknown; message?: unknown } }).error
+      ? (errBody as {
+          error: { code?: unknown; message?: unknown; details?: unknown };
+        }).error
       : undefined;
 
   const code = typeof errObj?.code === "string" ? errObj.code : undefined;
@@ -274,6 +311,7 @@ async function apiGet<T>(
     typeof errObj?.message === "string"
       ? errObj.message
       : `HTTP ${response.status} from ${path}`;
+  const details = parseErrorDetails(errObj?.details);
 
   if (response.status === 401) {
     throw new DEnvError(msg, { code: "unauthorized" });
@@ -298,7 +336,7 @@ async function apiGet<T>(
     ? code
     : "internal";
 
-  throw new DEnvError(msg, { code: safeCode });
+  throwApiError(msg, safeCode, details);
 }
 
 /**
@@ -360,7 +398,9 @@ async function apiPost(
 
   const errObj =
     errBody !== null && typeof errBody === "object" && "error" in errBody
-      ? (errBody as { error: { code?: unknown; message?: unknown } }).error
+      ? (errBody as {
+          error: { code?: unknown; message?: unknown; details?: unknown };
+        }).error
       : undefined;
 
   const code = typeof errObj?.code === "string" ? errObj.code : undefined;
@@ -368,6 +408,7 @@ async function apiPost(
     typeof errObj?.message === "string"
       ? errObj.message
       : `HTTP ${response.status} from ${path}`;
+  const details = parseErrorDetails(errObj?.details);
 
   if (response.status === 401) {
     throw new DEnvError(msg, { code: "unauthorized" });
@@ -390,7 +431,7 @@ async function apiPost(
     ? code
     : "internal";
 
-  throw new DEnvError(msg, { code: safeCode });
+  throwApiError(msg, safeCode, details);
 }
 
 async function apiPostJson<T>(
@@ -447,7 +488,9 @@ async function apiPostJson<T>(
 
   const errObj =
     errBody !== null && typeof errBody === "object" && "error" in errBody
-      ? (errBody as { error: { code?: unknown; message?: unknown } }).error
+      ? (errBody as {
+          error: { code?: unknown; message?: unknown; details?: unknown };
+        }).error
       : undefined;
 
   const code = typeof errObj?.code === "string" ? errObj.code : undefined;
@@ -455,6 +498,7 @@ async function apiPostJson<T>(
     typeof errObj?.message === "string"
       ? errObj.message
       : `HTTP ${response.status} from ${path}`;
+  const details = parseErrorDetails(errObj?.details);
 
   const isKnownCode =
     code === "daemon_unreachable" ||
@@ -473,7 +517,7 @@ async function apiPostJson<T>(
     ? code
     : "internal";
 
-  throw new DEnvError(msg, { code: safeCode });
+  throwApiError(msg, safeCode, details);
 }
 
 async function apiDelete(
@@ -525,7 +569,9 @@ async function apiDelete(
 
   const errObj =
     errBody !== null && typeof errBody === "object" && "error" in errBody
-      ? (errBody as { error: { code?: unknown; message?: unknown } }).error
+      ? (errBody as {
+          error: { code?: unknown; message?: unknown; details?: unknown };
+        }).error
       : undefined;
 
   const code = typeof errObj?.code === "string" ? errObj.code : undefined;
@@ -533,6 +579,7 @@ async function apiDelete(
     typeof errObj?.message === "string"
       ? errObj.message
       : `HTTP ${response.status} from ${path}`;
+  const details = parseErrorDetails(errObj?.details);
 
   const isKnownCode =
     code === "daemon_unreachable" ||
@@ -551,7 +598,7 @@ async function apiDelete(
     ? code
     : "internal";
 
-  throw new DEnvError(msg, { code: safeCode });
+  throwApiError(msg, safeCode, details);
 }
 
 // ---------------------------------------------------------------------------
@@ -608,6 +655,24 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
         base,
         token,
         `/v1/projects/${encodeURIComponent(id)}/diff${query}`,
+        timeoutMs,
+      );
+    },
+
+    async commitProject(id, opts) {
+      const body: Record<string, unknown> = {};
+      if (opts?.message !== undefined) {
+        body["message"] = opts.message;
+      }
+      if (opts?.strategy !== undefined) {
+        body["strategy"] = opts.strategy;
+      }
+
+      return apiPostJson<ProjectCommitResult>(
+        base,
+        token,
+        `/v1/projects/${encodeURIComponent(id)}/commit`,
+        body,
         timeoutMs,
       );
     },

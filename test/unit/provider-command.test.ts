@@ -34,6 +34,7 @@ function fakeClient(overrides: Partial<ControlClient> = {}): ControlClient {
     createProject: () => Promise.reject(new Error("not needed")),
     getProject: () => Promise.reject(new Error("not needed")),
     getProjectDiff: () => Promise.reject(new Error("not needed")),
+    commitProject: () => Promise.reject(new Error("not needed")),
     pullProject: () => Promise.reject(new Error("not needed")),
     deleteProject: () => Promise.resolve(),
     listProviders: () => Promise.resolve([localFileMetadata]),

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
 import { Command } from "commander";
+import { buildCommitCommand } from "./commands/commit.js";
 import { buildDaemonCommand } from "./commands/daemon.js";
 import { buildDiffCommand } from "./commands/diff.js";
 import { buildInitCommand } from "./commands/init.js";
@@ -28,6 +29,7 @@ program
     process.stdout.write(JSON.stringify({ cli: version }) + "\n");
   });
 
+program.addCommand(buildCommitCommand());
 program.addCommand(buildDaemonCommand());
 program.addCommand(buildDiffCommand());
 program.addCommand(buildInitCommand());
