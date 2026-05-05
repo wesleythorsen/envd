@@ -29,6 +29,7 @@ function fakeClient(result: ProjectDiffResult): ControlClient {
     createProject: () => Promise.reject(new Error("not needed")),
     getProject: () => Promise.reject(new Error("not needed")),
     getProjectDiff: () => Promise.resolve(result),
+    pullProject: () => Promise.reject(new Error("not needed")),
     deleteProject: () => Promise.resolve(),
     listProviders: () => Promise.resolve([]),
     createProviderInstance: () => Promise.reject(new Error("not needed")),

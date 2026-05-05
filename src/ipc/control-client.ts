@@ -22,6 +22,10 @@ export interface ControlClient {
     id: string,
     opts?: ProjectDiffOptions,
   ): Promise<ProjectDiffResult>;
+  pullProject(
+    id: string,
+    opts?: ProjectPullOptions,
+  ): Promise<ProjectPullResult>;
   deleteProject(id: string): Promise<void>;
   listProviders(): Promise<readonly ProviderMetadata[]>;
   createProviderInstance(
@@ -71,6 +75,14 @@ export interface ProjectDiffOptions {
 export interface ProjectDiffResult {
   readonly keys: SecretDiffKeys;
   readonly values?: SecretDiff;
+}
+
+export interface ProjectPullOptions {
+  readonly force?: boolean;
+}
+
+export interface ProjectPullResult {
+  readonly snapshotFetchedAt: number;
 }
 
 export interface ProviderMetadata {
@@ -596,6 +608,16 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
         base,
         token,
         `/v1/projects/${encodeURIComponent(id)}/diff${query}`,
+        timeoutMs,
+      );
+    },
+
+    async pullProject(id, opts) {
+      return apiPostJson<ProjectPullResult>(
+        base,
+        token,
+        `/v1/projects/${encodeURIComponent(id)}/pull`,
+        opts?.force === true ? { force: true } : {},
         timeoutMs,
       );
     },

@@ -6,6 +6,7 @@ import { buildDiffCommand } from "./commands/diff.js";
 import { buildInitCommand } from "./commands/init.js";
 import { buildLinkCommand } from "./commands/link.js";
 import { buildProviderCommand } from "./commands/provider.js";
+import { buildPullCommand } from "./commands/pull.js";
 import { buildStatusCommand } from "./commands/status.js";
 import { buildUnlinkCommand } from "./commands/unlink.js";
 
@@ -32,6 +33,7 @@ program.addCommand(buildDiffCommand());
 program.addCommand(buildInitCommand());
 program.addCommand(buildLinkCommand());
 program.addCommand(buildProviderCommand());
+program.addCommand(buildPullCommand());
 program.addCommand(buildStatusCommand());
 program.addCommand(buildUnlinkCommand());
 
