@@ -31,6 +31,10 @@ export function logDir(): string {
   return join(stateDir(), "logs");
 }
 
+export function daemonLogFile(): string {
+  return join(logDir(), "d-envd.log");
+}
+
 /**
  * Returns the OS-specific WebDAV mount path.
  * $D_ENV_MOUNT_PATH overrides the default.

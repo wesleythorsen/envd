@@ -91,6 +91,13 @@ describe.skipIf(isWin32)("daemon lifecycle integration", () => {
     expect(data["status"]).toBe("already_running");
   });
 
+  it("daemon logs returns recent startup output", () => {
+    const result = cliCommand(["daemon", "logs", "--tail", "20"], env);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("d-envd starting");
+    expect(result.stdout).toContain('"scope":"daemon"');
+  });
+
   it("stop stops the daemon cleanly", () => {
     const stopResult = cliCommand(["daemon", "stop", "--json"], env);
     expect(stopResult.status).toBe(0);

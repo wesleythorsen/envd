@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createLogger, type LogData } from "../../src/shared/logger.js";
+import {
+  createLogger,
+  resetLogWriter,
+  type LogData,
+} from "../../src/shared/logger.js";
 
 function captureStderr(fn: () => void): string {
   const lines: string[] = [];
@@ -26,6 +30,7 @@ describe("JSON format (D_ENV_LOG_FORMAT=json)", () => {
   afterEach(() => {
     delete process.env["D_ENV_LOG_FORMAT"];
     delete process.env["D_ENV_LOG_LEVEL"];
+    resetLogWriter();
   });
 
   it("emits a valid JSON object per log call", () => {
@@ -76,6 +81,7 @@ describe("Human format (default)", () => {
 
   afterEach(() => {
     delete process.env["D_ENV_LOG_LEVEL"];
+    resetLogWriter();
   });
 
   it("emits a readable line with scope and message", () => {
@@ -107,6 +113,7 @@ describe("Level filtering", () => {
   afterEach(() => {
     delete process.env["D_ENV_LOG_LEVEL"];
     delete process.env["D_ENV_LOG_FORMAT"];
+    resetLogWriter();
   });
 
   it("suppresses debug when level=info (default)", () => {

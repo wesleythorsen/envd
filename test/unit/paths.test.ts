@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // module load time), we can simply set the env var before each call.
 import {
   controlTokenFile,
+  daemonLogFile,
   ensureStateDir,
   logDir,
   mountPath,
@@ -79,6 +80,10 @@ describe("derived path functions", () => {
 
   it("logDir() is inside stateDir()", () => {
     expect(logDir()).toBe(join(stateDir(), "logs"));
+  });
+
+  it("daemonLogFile() is inside logDir()", () => {
+    expect(daemonLogFile()).toBe(join(logDir(), "d-envd.log"));
   });
 });
 

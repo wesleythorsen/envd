@@ -1,5 +1,13 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
-import { request } from "undici";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  afterAll,
+  afterEach,
+} from "vitest";
+import { fetch, request } from "undici";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -14,6 +22,7 @@ import type { Cache } from "../../src/core/cache.js";
 import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
 import { StagingRepo } from "../../src/core/staging.js";
 import { providers } from "../../src/providers/registry.js";
+import { createLogger } from "../../src/shared/logger.js";
 import type {
   ChangeSet,
   Provider,
@@ -44,8 +53,25 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await server.close();
+  if (server !== undefined) {
+    await server.close();
+  }
 });
+
+async function readStreamUntil(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  predicate: (text: string) => boolean,
+): Promise<string> {
+  let text = "";
+  while (!predicate(text)) {
+    const chunk = await reader.read();
+    if (chunk.done) {
+      break;
+    }
+    text += Buffer.from(chunk.value).toString("utf8");
+  }
+  return text;
+}
 
 // ---------------------------------------------------------------------------
 // /v1/health — happy path
@@ -101,6 +127,81 @@ describe("GET /v1/version", () => {
     expect(body["cli"]).toBeNull();
     expect(typeof body["daemon"]).toBe("string");
     expect(body["protocol"]).toBe("v1");
+  });
+});
+
+describe("GET /v1/logs", () => {
+  let tempHome: string;
+
+  beforeEach(() => {
+    tempHome = mkdtempSync(join(tmpdir(), "d-env-control-logs-"));
+    process.env["D_ENV_HOME"] = tempHome;
+    process.env["D_ENV_LOG_FORMAT"] = "json";
+  });
+
+  afterEach(() => {
+    delete process.env["D_ENV_HOME"];
+    delete process.env["D_ENV_LOG_FORMAT"];
+    rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  it("returns the requested tail lines from the daemon log file", async () => {
+    mkdirSync(join(tempHome, "logs"), { recursive: true });
+    writeFileSync(
+      join(tempHome, "logs", "d-envd.log"),
+      "alpha\nbravo\ncharlie\n",
+    );
+
+    const res = await request(`${base}/v1/logs?tail=2`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = (await res.body.json()) as { lines?: unknown };
+    expect(body.lines).toEqual(["bravo\n", "charlie\n"]);
+  });
+
+  it("streams existing tail lines and new log events over SSE", async () => {
+    mkdirSync(join(tempHome, "logs"), { recursive: true });
+    writeFileSync(
+      join(tempHome, "logs", "d-envd.log"),
+      '{"msg":"seed"}\n',
+    );
+
+    const res = await fetch(`${base}/v1/logs?tail=1&follow=true`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+
+    const reader = res.body?.getReader();
+    if (reader === undefined) {
+      throw new Error("expected SSE body reader");
+    }
+
+    const log = createLogger("test/logs");
+    log.info({ msg: "live event" });
+
+    const text = await readStreamUntil(reader, (value) => {
+      return value.includes("seed") && value.includes("live event");
+    });
+
+    expect(text).toContain('data: {"line":"{\\"msg\\":\\"seed\\"}\\n"}');
+    expect(text).toContain("live event");
+
+    await reader.cancel();
+  });
+
+  it("rejects an invalid tail query", async () => {
+    const res = await request(`${base}/v1/logs?tail=-1`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+
+    expect(res.statusCode).toBe(400);
+    const body = (await res.body.json()) as Record<string, unknown>;
+    const err = body["error"] as Record<string, unknown>;
+    expect(err["code"]).toBe("usage_error");
   });
 });
 

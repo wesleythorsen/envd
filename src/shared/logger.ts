@@ -17,11 +17,18 @@ export interface Logger {
   error(entry: LogEntry): void;
 }
 
+type LogWriter = (line: string) => void;
+type LogSubscriber = (line: string) => void;
+
 const LEVELS: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
   warn: 2,
   error: 3,
+};
+const subscribers = new Set<LogSubscriber>();
+let writeLine: LogWriter = (line) => {
+  process.stderr.write(line);
 };
 
 function resolveLevel(): LogLevel {
@@ -34,6 +41,23 @@ function resolveLevel(): LogLevel {
 
 function resolveFormat(): "json" | "human" {
   return process.env["D_ENV_LOG_FORMAT"] === "json" ? "json" : "human";
+}
+
+export function setLogWriter(writer: LogWriter): void {
+  writeLine = writer;
+}
+
+export function resetLogWriter(): void {
+  writeLine = (line) => {
+    process.stderr.write(line);
+  };
+}
+
+export function subscribeLogLines(listener: LogSubscriber): () => void {
+  subscribers.add(listener);
+  return () => {
+    subscribers.delete(listener);
+  };
 }
 
 /** Creates a logger bound to a scope string (e.g. "daemon", "cli/init"). */
@@ -52,7 +76,11 @@ export function createLogger(scope: string): Logger {
       if (entry.data !== undefined) {
         line["data"] = entry.data;
       }
-      process.stderr.write(JSON.stringify(line) + "\n");
+      const rendered = JSON.stringify(line) + "\n";
+      writeLine(rendered);
+      for (const subscriber of subscribers) {
+        subscriber(rendered);
+      }
     } else {
       const dataStr =
         entry.data !== undefined && Object.keys(entry.data).length > 0
@@ -61,9 +89,11 @@ export function createLogger(scope: string): Logger {
               .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
               .join(" ")
           : "";
-      process.stderr.write(
-        `[${level.toUpperCase()}] ${scope}: ${entry.msg}${dataStr}\n`,
-      );
+      const rendered = `[${level.toUpperCase()}] ${scope}: ${entry.msg}${dataStr}\n`;
+      writeLine(rendered);
+      for (const subscriber of subscribers) {
+        subscriber(rendered);
+      }
     }
   }
 

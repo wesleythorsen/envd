@@ -3,8 +3,13 @@ import { spawn } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fetch } from "undici";
 import { createControlClient } from "../../ipc/control-client.js";
-import { pidFile, portsFile } from "../../shared/paths.js";
+import {
+  controlTokenFile,
+  pidFile,
+  portsFile,
+} from "../../shared/paths.js";
 import { DEnvError } from "../../shared/errors.js";
 
 // ---------------------------------------------------------------------------
@@ -44,6 +49,15 @@ interface Ports {
   webdav: number;
 }
 
+interface Writable {
+  write(chunk: string): unknown;
+}
+
+interface DaemonCommandDeps {
+  readonly stdout?: Writable;
+  readonly stderr?: Writable;
+}
+
 function readPorts(): Ports | undefined {
   try {
     // as-cast justified: JSON.parse returns unknown; we narrow after.
@@ -60,6 +74,19 @@ function readPorts(): Ports | undefined {
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
       return undefined;
+    }
+    throw err;
+  }
+}
+
+function readControlToken(): string {
+  try {
+    return readFileSync(controlTokenFile(), "utf-8").trim();
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new DEnvError("control token missing", {
+        code: "daemon_unreachable",
+      });
     }
     throw err;
   }
@@ -133,6 +160,93 @@ function out(human: string, jsonData?: unknown, useJson?: boolean): void {
     process.stdout.write(JSON.stringify(jsonData) + "\n");
   } else {
     process.stdout.write(human + "\n");
+  }
+}
+
+function writeStdout(deps: DaemonCommandDeps, text: string): void {
+  (deps.stdout ?? process.stdout).write(text);
+}
+
+function writeStderr(deps: DaemonCommandDeps, text: string): void {
+  (deps.stderr ?? process.stderr).write(text);
+}
+
+function logsUrl(tail: number, follow: boolean): string {
+  const ports = readPorts();
+  if (ports === undefined) {
+    throw new DEnvError("daemon is not running (no ports file)", {
+      code: "daemon_unreachable",
+    });
+  }
+
+  const url = new URL(`http://127.0.0.1:${ports.control}/v1/logs`);
+  url.searchParams.set("tail", String(tail));
+  if (follow) {
+    url.searchParams.set("follow", "true");
+  }
+  return url.toString();
+}
+
+export async function readDaemonLogs(
+  opts: { tail?: string; follow?: boolean },
+  deps: DaemonCommandDeps = {},
+): Promise<void> {
+  const tail =
+    opts.tail === undefined ? 100 : Number.parseInt(opts.tail, 10);
+  if (!Number.isInteger(tail) || tail < 0) {
+    throw new DEnvError("tail must be a non-negative integer", {
+      code: "usage_error",
+    });
+  }
+
+  const response = await fetch(logsUrl(tail, opts.follow === true), {
+    headers: { Authorization: `Bearer ${readControlToken()}` },
+  });
+  if (!response.ok) {
+    throw new DEnvError(`daemon logs request failed (${response.status})`, {
+      code: "daemon_unreachable",
+    });
+  }
+
+  if (opts.follow === true) {
+    const reader = response.body?.getReader();
+    if (reader === undefined) {
+      return;
+    }
+    let buffer = "";
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) {
+        break;
+      }
+      buffer += Buffer.from(chunk.value).toString("utf8");
+      for (;;) {
+        const separator = buffer.indexOf("\n\n");
+        if (separator === -1) {
+          break;
+        }
+        const event = buffer.slice(0, separator);
+        buffer = buffer.slice(separator + 2);
+        for (const line of event.split("\n")) {
+          if (!line.startsWith("data: ")) {
+            continue;
+          }
+          const payload = JSON.parse(line.slice(6)) as { line?: unknown };
+          if (typeof payload.line === "string") {
+            writeStdout(deps, payload.line);
+          }
+        }
+      }
+    }
+    return;
+  }
+
+  const body = (await response.json()) as { lines?: unknown };
+  const lines = Array.isArray(body.lines) ? body.lines : [];
+  for (const line of lines) {
+    if (typeof line === "string") {
+      writeStdout(deps, line);
+    }
   }
 }
 
@@ -298,7 +412,7 @@ async function doRestart(opts: { json?: boolean }): Promise<void> {
 // Commander wiring
 // ---------------------------------------------------------------------------
 
-export function buildDaemonCommand(): Command {
+export function buildDaemonCommand(deps: DaemonCommandDeps = {}): Command {
   const daemon = new Command("daemon").description(
     "Manage the d-envd background daemon",
   );
@@ -333,6 +447,22 @@ export function buildDaemonCommand(): Command {
     .option("--json", "JSON output")
     .action(async (opts: { json?: boolean }) => {
       await doRestart(opts);
+    });
+
+  daemon
+    .command("logs")
+    .description("Read or stream daemon logs")
+    .option("--tail <n>", "number of trailing log lines", "100")
+    .option("-f, --follow", "follow new log lines")
+    .action(async (opts: { tail?: string; follow?: boolean }) => {
+      try {
+        await readDaemonLogs(opts, deps);
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error ? err.message : String(err);
+        writeStderr(deps, `${message}\n`);
+        process.exit(1);
+      }
     });
 
   return daemon;

@@ -6,7 +6,8 @@ import {
 import type { Server } from "node:http";
 import { timingSafeEqual, randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
-import { createLogger } from "../../shared/logger.js";
+import { readLogTail } from "../../shared/log-file.js";
+import { createLogger, subscribeLogLines } from "../../shared/logger.js";
 import { DEnvError, type ErrorCode } from "../../shared/errors.js";
 import type { ProjectRepo } from "../../core/project.js";
 import { createCache, type Cache, type CacheResult } from "../../core/cache.js";
@@ -15,7 +16,7 @@ import {
   ProviderInstanceRepo,
   type ProviderInstanceRecord,
 } from "../../core/provider-instance.js";
-import { mountPath } from "../../shared/paths.js";
+import { daemonLogFile, mountPath } from "../../shared/paths.js";
 import { providers, findProvider } from "../../providers/registry.js";
 import type {
   ChangeSet,
@@ -217,6 +218,62 @@ function handleHealth(res: ServerResponse): void {
 
 function handleVersion(res: ServerResponse): void {
   writeJson(res, 200, { cli: null, daemon: PKG_VERSION, protocol: "v1" });
+}
+
+function parseLogsRequest(req: IncomingMessage): {
+  tail: number;
+  follow: boolean;
+} {
+  const url = new URL(req.url ?? "/v1/logs", "http://127.0.0.1");
+  const tailRaw = url.searchParams.get("tail");
+  const followRaw = url.searchParams.get("follow");
+  const tail =
+    tailRaw === null || tailRaw === ""
+      ? 100
+      : Number.parseInt(tailRaw, 10);
+
+  if (!Number.isInteger(tail) || tail < 0) {
+    throw new DEnvError("tail must be a non-negative integer", {
+      code: "usage_error",
+    });
+  }
+
+  return {
+    tail,
+    follow: followRaw === "true",
+  };
+}
+
+function writeSseLine(res: ServerResponse, line: string): void {
+  res.write(`data: ${JSON.stringify({ line })}\n\n`);
+}
+
+function handleGetLogs(req: IncomingMessage, res: ServerResponse): void {
+  const { tail, follow } = parseLogsRequest(req);
+  const lines = readLogTail(daemonLogFile(), tail);
+
+  if (!follow) {
+    writeJson(res, 200, { lines });
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+
+  for (const line of lines) {
+    writeSseLine(res, line);
+  }
+
+  const unsubscribe = subscribeLogLines((line) => {
+    writeSseLine(res, line);
+  });
+  req.on("close", () => {
+    unsubscribe();
+    res.end();
+  });
 }
 
 /**
@@ -1323,6 +1380,7 @@ const KNOWN_PATHS = new Set<string>([
   "/v1/health",
   "/v1/version",
   "/v1/shutdown",
+  "/v1/logs",
   "/v1/projects",
   "/v1/providers",
   "/v1/provider-instances",
@@ -1354,6 +1412,15 @@ function dispatch(
 
   if (handler !== undefined) {
     handler(req, res);
+    return;
+  }
+
+  if (method === "GET" && path === "/v1/logs") {
+    try {
+      handleGetLogs(req, res);
+    } catch (err: unknown) {
+      writeErrorFromUnknown(res, err);
+    }
     return;
   }
 

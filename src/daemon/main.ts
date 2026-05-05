@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
 import { readFileSync, writeFileSync, rmSync } from "node:fs";
-import { createLogger } from "../shared/logger.js";
+import { RotatingFileLogSink } from "../shared/log-file.js";
+import { createLogger, setLogWriter } from "../shared/logger.js";
 import { startWebdavServer } from "./webdav/server.js";
 import { startControlServer, generateToken } from "./control/server.js";
 import {
   controlTokenFile,
+  daemonLogFile,
   ensureStateDir,
   pidFile,
   portsFile,
@@ -141,9 +143,17 @@ function cleanupFiles(): void {
 }
 
 async function main(): Promise<void> {
+  ensureStateDir();
+  if (process.env["D_ENV_LOG_FORMAT"] === undefined) {
+    process.env["D_ENV_LOG_FORMAT"] = "json";
+  }
+  const logSink = new RotatingFileLogSink(daemonLogFile());
+  setLogWriter((line) => {
+    logSink.write(line);
+  });
+
   log.info({ msg: `d-envd starting`, data: { version, pid: process.pid } });
 
-  ensureStateDir();
   checkPidFile();
   writePidFile();
 
