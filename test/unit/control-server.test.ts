@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { request } from "undici";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -11,6 +11,7 @@ import {
 import { openState, type StateStore } from "../../src/core/state.js";
 import { ProjectRepo } from "../../src/core/project.js";
 import { ProviderInstanceRepo } from "../../src/core/provider-instance.js";
+import { StagingRepo } from "../../src/core/staging.js";
 
 const TOKEN = generateToken();
 
@@ -228,6 +229,133 @@ describe("/v1/projects", () => {
     const body = (await res.body.json()) as Record<string, unknown>;
     const err = body["error"] as Record<string, unknown>;
     expect(err["code"]).toBe("usage_error");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /v1/projects/:id/diff
+// ---------------------------------------------------------------------------
+
+describe("GET /v1/projects/:id/diff", () => {
+  const diffToken = generateToken();
+  let diffServer: ControlServerHandle;
+  let diffBase: string;
+  let state: StateStore;
+  let tempDir: string;
+  let projectId: string;
+  let cleanProjectId: string;
+
+  beforeAll(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "d-env-control-diff-"));
+    const providerFile = join(tempDir, "secrets.json");
+    const projectPath = join(tempDir, "project");
+    const cleanProjectPath = join(tempDir, "clean-project");
+    mkdirSync(projectPath);
+    mkdirSync(cleanProjectPath);
+    writeFileSync(
+      providerFile,
+      JSON.stringify({
+        DELETED: "gone",
+        KEPT: "same",
+        MODIFIED: "old",
+      }),
+      "utf-8",
+    );
+
+    state = openState(join(tempDir, "state.db"));
+    const projectRepo = new ProjectRepo(state.db);
+    const providerInstanceRepo = new ProviderInstanceRepo(state.db);
+    const stagingRepo = new StagingRepo(state.db);
+    const providerInstance = providerInstanceRepo.create({
+      provider: "local-file",
+      name: "Diff fixture",
+      config: JSON.stringify({ path: providerFile }),
+    });
+    const project = projectRepo.create({
+      path: projectPath,
+      providerInstanceId: providerInstance.id,
+    });
+    const cleanProject = projectRepo.create({
+      path: cleanProjectPath,
+      providerInstanceId: providerInstance.id,
+    });
+    stagingRepo.setDesired(project.id, {
+      ADDED: "fresh",
+      KEPT: "same",
+      MODIFIED: "new",
+    });
+    projectId = project.id;
+    cleanProjectId = cleanProject.id;
+
+    diffServer = await startControlServer({
+      port: 0,
+      token: diffToken,
+      projectRepo,
+      providerInstanceRepo,
+      stagingRepo,
+    });
+    diffBase = `http://127.0.0.1:${diffServer.port}`;
+  });
+
+  afterAll(async () => {
+    await diffServer.close();
+    state.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("returns empty keys when there is no staging", async () => {
+    const res = await request(
+      `${diffBase}/v1/projects/${cleanProjectId}/diff`,
+      {
+        headers: { Authorization: `Bearer ${diffToken}` },
+      },
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(await res.body.json()).toEqual({
+      keys: { added: [], modified: [], deleted: [] },
+    });
+  });
+
+  it("returns keys only by default", async () => {
+    const res = await request(`${diffBase}/v1/projects/${projectId}/diff`, {
+      headers: { Authorization: `Bearer ${diffToken}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = (await res.body.json()) as Record<string, unknown>;
+    expect(body).toEqual({
+      keys: {
+        added: ["ADDED"],
+        modified: ["MODIFIED"],
+        deleted: ["DELETED"],
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain("fresh");
+    expect(JSON.stringify(body)).not.toContain("old");
+  });
+
+  it("includes values when values=true", async () => {
+    const res = await request(
+      `${diffBase}/v1/projects/${projectId}/diff?values=true`,
+      {
+        headers: { Authorization: `Bearer ${diffToken}` },
+      },
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(await res.body.json()).toEqual({
+      keys: {
+        added: ["ADDED"],
+        modified: ["MODIFIED"],
+        deleted: ["DELETED"],
+      },
+      values: {
+        added: { ADDED: "fresh" },
+        modified: { MODIFIED: { before: "old", after: "new" } },
+        deleted: { DELETED: "gone" },
+      },
+    });
   });
 });
 

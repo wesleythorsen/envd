@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { createLogger } from "../../shared/logger.js";
 import { DEnvError, type ErrorCode } from "../../shared/errors.js";
 import type { ProjectRepo } from "../../core/project.js";
+import type { StagedDesiredMap, StagingRepo } from "../../core/staging.js";
 import {
   ProviderInstanceRepo,
   type ProviderInstanceRecord,
@@ -19,7 +20,15 @@ import type {
   KeychainAdapter,
   Provider,
   ProviderContext,
+  ProviderInstance,
+  SecretMap,
 } from "../../providers/base.js";
+import {
+  diffSecrets,
+  toSecretDiffKeys,
+  type SecretDiff,
+  type SecretDiffKeys,
+} from "../../kinds/secrets/diff.js";
 import { createKeychainAdapter } from "../../core/keychain.js";
 import { readJsonBody } from "./body.js";
 
@@ -54,6 +63,7 @@ export interface ControlServerOpts {
   onShutdown?: () => void;
   projectRepo?: ProjectRepo;
   providerInstanceRepo?: ProviderInstanceRepo;
+  stagingRepo?: StagingRepo;
   keychain?: KeychainAdapter;
 }
 
@@ -239,6 +249,15 @@ function requireProviderInstanceRepo(
   return providerInstanceRepo;
 }
 
+function requireStagingRepo(stagingRepo: StagingRepo | undefined): StagingRepo {
+  if (stagingRepo === undefined) {
+    throw new DEnvError("staging registry is not available", {
+      code: "internal",
+    });
+  }
+  return stagingRepo;
+}
+
 function requireKeychain(
   keychain: KeychainAdapter | undefined,
 ): KeychainAdapter {
@@ -352,6 +371,128 @@ function handleGetProject(
     ...project,
     mountPath: projectMountPath(project.id, project.token),
   });
+}
+
+function emptySecretDiffKeys(): SecretDiffKeys {
+  return { added: [], modified: [], deleted: [] };
+}
+
+function emptySecretDiff(): SecretDiff {
+  return { added: {}, modified: {}, deleted: {} };
+}
+
+function requestIncludesValues(req: IncomingMessage): boolean {
+  try {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    return url.searchParams.get("values") === "true";
+  } catch {
+    return false;
+  }
+}
+
+function stagedDesiredToSecretMap(desired: StagedDesiredMap): SecretMap {
+  const map: Record<string, string> = {};
+  for (const [key, value] of Object.entries(desired)) {
+    if (value !== null) {
+      map[key] = value;
+    }
+  }
+  return map;
+}
+
+async function fetchProjectSecrets(
+  projectId: string,
+  providerInstanceId: string | null,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+): Promise<SecretMap> {
+  if (providerInstanceId === null) {
+    throw new DEnvError("project has no provider instance", {
+      code: "usage_error",
+      details: { projectId },
+    });
+  }
+
+  const repo = requireProviderInstanceRepo(providerInstanceRepo);
+  const keychainAdapter = requireKeychain(keychain);
+  const record = repo.get(providerInstanceId);
+  if (record === undefined) {
+    throw new DEnvError("provider instance not found", {
+      code: "provider_unreachable",
+      details: { providerInstanceId },
+    });
+  }
+
+  const provider = findProvider(record.provider);
+  if (provider === undefined) {
+    throw new DEnvError("provider is not registered", {
+      code: "usage_error",
+      details: { provider: record.provider },
+    });
+  }
+
+  try {
+    const instance: ProviderInstance = await provider.create(
+      providerContext(keychainAdapter, record.id, provider.name),
+      parseStoredConfig(record),
+    );
+    try {
+      return await instance.fetch();
+    } finally {
+      if (instance.close !== undefined) {
+        await instance.close();
+      }
+    }
+  } catch (err: unknown) {
+    if (err instanceof DEnvError) {
+      throw err;
+    }
+    throw new DEnvError("provider is unreachable", {
+      code: "provider_unreachable",
+      cause: err,
+    });
+  }
+}
+
+async function handleGetProjectDiff(
+  req: IncomingMessage,
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  stagingRepo: StagingRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+  id: string,
+): Promise<void> {
+  const projects = requireProjectRepo(projectRepo);
+  const staging = requireStagingRepo(stagingRepo);
+  const project = projects.get(id);
+  if (project === undefined) {
+    writeJsonError(res, 404, "not_found", "Project not found");
+    return;
+  }
+
+  const includeValues = requestIncludesValues(req);
+  const desired = staging.getDesired(id);
+  if (desired === undefined) {
+    writeJson(
+      res,
+      200,
+      includeValues
+        ? { keys: emptySecretDiffKeys(), values: emptySecretDiff() }
+        : { keys: emptySecretDiffKeys() },
+    );
+    return;
+  }
+
+  const remote = await fetchProjectSecrets(
+    id,
+    project.providerInstanceId,
+    providerInstanceRepo,
+    keychain,
+  );
+  const diff = diffSecrets(remote, stagedDesiredToSecretMap(desired));
+  const keys = toSecretDiffKeys(diff);
+  writeJson(res, 200, includeValues ? { keys, values: diff } : { keys });
 }
 
 function handleDeleteProject(
@@ -774,6 +915,7 @@ function dispatch(
   routes: Map<RouteKey, Handler>,
   projectRepo: ProjectRepo | undefined,
   providerInstanceRepo: ProviderInstanceRepo | undefined,
+  stagingRepo: StagingRepo | undefined,
   keychain: KeychainAdapter | undefined,
   req: IncomingMessage,
   res: ServerResponse,
@@ -908,6 +1050,38 @@ function dispatch(
     return;
   }
 
+  const projectDiffMatch = /^\/v1\/projects\/([^/]+)\/diff$/.exec(path);
+  if (projectDiffMatch !== null) {
+    const projectId = projectDiffMatch[1];
+    if (projectId === undefined) {
+      writeJsonError(res, 404, "not_found", `No route for ${method} ${path}`);
+      return;
+    }
+
+    if (method === "GET") {
+      void handleGetProjectDiff(
+        req,
+        res,
+        projectRepo,
+        providerInstanceRepo,
+        stagingRepo,
+        keychain,
+        projectId,
+      ).catch((err: unknown) => {
+        writeErrorFromUnknown(res, err);
+      });
+      return;
+    }
+
+    writeJsonError(
+      res,
+      405,
+      "method_not_allowed",
+      `Method ${method} not allowed on ${path}`,
+    );
+    return;
+  }
+
   const projectMatch = /^\/v1\/projects\/([^/]+)$/.exec(path);
   if (projectMatch !== null) {
     const projectId = projectMatch[1];
@@ -964,6 +1138,7 @@ export function startControlServer(
   const token = opts.token;
   const projectRepo = opts.projectRepo;
   const providerInstanceRepo = opts.providerInstanceRepo;
+  const stagingRepo = opts.stagingRepo;
   const keychain =
     opts.keychain ??
     (providerInstanceRepo === undefined ? undefined : createKeychainAdapter());
@@ -976,6 +1151,7 @@ export function startControlServer(
         routes,
         projectRepo,
         providerInstanceRepo,
+        stagingRepo,
         keychain,
         req,
         res,
