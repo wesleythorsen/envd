@@ -8,6 +8,7 @@ import type {
 } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
 import { DEnvError } from "../../shared/errors.js";
+import { writeCliError } from "../error-output.js";
 import { formatDiff } from "./diff.js";
 import { PROJECT_FILE, parseProjectFile } from "../project-files.js";
 
@@ -50,10 +51,6 @@ function resolveClient(deps: PullCommandDeps): ControlClient {
 
 function out(deps: PullCommandDeps, text: string): void {
   (deps.stdout ?? defaultStdout).write(text);
-}
-
-function err(deps: PullCommandDeps, text: string): void {
-  (deps.stderr ?? process.stderr).write(text);
 }
 
 function resolveProjectId(projectPath: string | undefined): string {
@@ -122,10 +119,7 @@ function printHumanResult(result: PullResult, deps: PullCommandDeps): void {
 }
 
 function handlePullError(errValue: unknown, deps: PullCommandDeps): void {
-  const message =
-    errValue instanceof Error ? errValue.message : String(errValue);
-  err(deps, `${message}\n`);
-  process.exit(1);
+  writeCliError(errValue, deps);
 }
 
 export function buildPullCommand(deps: PullCommandDeps = {}): Command {

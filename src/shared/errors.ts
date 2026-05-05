@@ -1,16 +1,19 @@
-export type ErrorCode =
-  | "daemon_unreachable"
-  | "usage_error"
-  | "provider_unreachable"
-  | "provider_auth"
-  | "commit_conflict"
-  | "mount_failed"
-  | "not_initialized"
-  | "internal"
-  | "bad_dotenv"
-  | "unauthorized"
-  | "not_found"
-  | "method_not_allowed";
+export const ERROR_CODES = [
+  "daemon_unreachable",
+  "usage_error",
+  "provider_unreachable",
+  "provider_auth",
+  "commit_conflict",
+  "mount_failed",
+  "not_initialized",
+  "internal",
+  "bad_dotenv",
+  "unauthorized",
+  "not_found",
+  "method_not_allowed",
+] as const;
+
+export type ErrorCode = (typeof ERROR_CODES)[number];
 
 export class DEnvError extends Error {
   readonly code: ErrorCode;

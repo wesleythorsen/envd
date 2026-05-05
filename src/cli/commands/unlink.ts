@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import type { ControlClient } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
 import { DEnvError } from "../../shared/errors.js";
+import { writeCliError } from "../error-output.js";
 import {
   ENV_FILE,
   PROJECT_FILE,
@@ -85,9 +86,7 @@ export function buildUnlinkCommand(): Command {
         });
         printResult(result, opts.json);
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`${message}\n`);
-        process.exit(1);
+        writeCliError(err);
       }
     });
 }

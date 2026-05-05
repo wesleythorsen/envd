@@ -15,6 +15,7 @@ import type {
 } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
 import { DEnvError } from "../../shared/errors.js";
+import { errorHintForCode, writeCliError } from "../error-output.js";
 import { formatDiff } from "./diff.js";
 import { PROJECT_FILE, parseProjectFile } from "../project-files.js";
 
@@ -193,7 +194,7 @@ function conflictKeysFromDetails(details: unknown): string[] {
 
   const remote = detailRecord["remote"];
   if (remote !== null && typeof remote === "object" && !Array.isArray(remote)) {
-    return Object.keys(remote as Record<string, unknown>).sort();
+    return Object.keys(remote).sort();
   }
 
   return [];
@@ -209,17 +210,11 @@ function handleCommitError(errValue: unknown, deps: CommitCommandDeps): void {
         err(deps, `  ${key}\n`);
       }
     }
-    err(
-      deps,
-      "Retry with `d-env commit --ours` to keep local values or `d-env commit --theirs` to accept remote values.\n",
-    );
+    err(deps, `${errorHintForCode("commit_conflict")}\n`);
     process.exit(1);
   }
 
-  const message =
-    errValue instanceof Error ? errValue.message : String(errValue);
-  err(deps, `${message}\n`);
-  process.exit(1);
+  writeCliError(errValue, deps);
 }
 
 export function buildCommitCommand(deps: CommitCommandDeps = {}): Command {

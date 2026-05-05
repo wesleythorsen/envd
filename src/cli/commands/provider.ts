@@ -11,6 +11,7 @@ import type {
 import { createControlClient } from "../../ipc/control-client.js";
 import type { JSONSchema } from "../../providers/base.js";
 import { DEnvError } from "../../shared/errors.js";
+import { writeCliError } from "../error-output.js";
 
 interface Writable {
   write(chunk: string): unknown;
@@ -83,10 +84,6 @@ function resolveClient(deps: ProviderCommandDeps): ControlClient {
 
 function out(deps: ProviderCommandDeps, text: string): void {
   (deps.stdout ?? defaultOutput).write(text);
-}
-
-function err(deps: ProviderCommandDeps, text: string): void {
-  (deps.stderr ?? process.stderr).write(text);
 }
 
 function schemaObject(schema: JSONSchema, label: string): SchemaObject {
@@ -612,10 +609,7 @@ function handleProviderError(
   errValue: unknown,
   deps: ProviderCommandDeps,
 ): void {
-  const message =
-    errValue instanceof Error ? errValue.message : String(errValue);
-  err(deps, `${message}\n`);
-  process.exit(1);
+  writeCliError(errValue, deps);
 }
 
 export function buildProviderCommand(deps: ProviderCommandDeps = {}): Command {

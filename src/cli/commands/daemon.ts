@@ -5,12 +5,9 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetch } from "undici";
 import { createControlClient } from "../../ipc/control-client.js";
-import {
-  controlTokenFile,
-  pidFile,
-  portsFile,
-} from "../../shared/paths.js";
+import { controlTokenFile, pidFile, portsFile } from "../../shared/paths.js";
 import { DEnvError } from "../../shared/errors.js";
+import { writeCliError } from "../error-output.js";
 import {
   installLaunchdAgent as defaultInstallLaunchdAgent,
   uninstallLaunchdAgent as defaultUninstallLaunchdAgent,
@@ -193,17 +190,11 @@ function writeStdout(deps: DaemonCommandDeps, text: string): void {
   (deps.stdout ?? process.stdout).write(text);
 }
 
-function writeStderr(deps: DaemonCommandDeps, text: string): void {
-  (deps.stderr ?? process.stderr).write(text);
-}
-
 function handleDaemonCommandError(
   error: unknown,
   deps: DaemonCommandDeps,
 ): void {
-  const message = error instanceof Error ? error.message : String(error);
-  writeStderr(deps, `${message}\n`);
-  process.exit(1);
+  writeCliError(error, deps);
 }
 
 function logsUrl(tail: number, follow: boolean): string {
@@ -226,8 +217,7 @@ export async function readDaemonLogs(
   opts: { tail?: string; follow?: boolean },
   deps: DaemonCommandDeps = {},
 ): Promise<void> {
-  const tail =
-    opts.tail === undefined ? 100 : Number.parseInt(opts.tail, 10);
+  const tail = opts.tail === undefined ? 100 : Number.parseInt(opts.tail, 10);
   if (!Number.isInteger(tail) || tail < 0) {
     throw new DEnvError("tail must be a non-negative integer", {
       code: "usage_error",

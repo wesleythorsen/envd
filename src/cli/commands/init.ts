@@ -12,6 +12,7 @@ import type {
 } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
 import { DEnvError } from "../../shared/errors.js";
+import { writeCliError } from "../error-output.js";
 import { createMountAdapter } from "../../mount/index.js";
 import { mountPath, portsFile } from "../../shared/paths.js";
 import type { MountAdapter } from "../../mount/adapter.js";
@@ -458,9 +459,7 @@ export function buildInitCommand(): Command {
         });
         printResult(result, opts.json);
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`${message}\n`);
-        process.exit(1);
+        writeCliError(err);
       }
     });
 }

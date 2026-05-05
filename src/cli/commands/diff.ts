@@ -9,6 +9,7 @@ import type {
 import { createControlClient } from "../../ipc/control-client.js";
 import { DEnvError } from "../../shared/errors.js";
 import { colorize } from "../color.js";
+import { writeCliError } from "../error-output.js";
 import { PROJECT_FILE, parseProjectFile } from "../project-files.js";
 
 interface Writable {
@@ -37,10 +38,6 @@ function resolveClient(deps: DiffCommandDeps): ControlClient {
 
 function out(deps: DiffCommandDeps, text: string): void {
   (deps.stdout ?? defaultStdout).write(text);
-}
-
-function err(deps: DiffCommandDeps, text: string): void {
-  (deps.stderr ?? process.stderr).write(text);
 }
 
 export async function diffProject(
@@ -113,10 +110,7 @@ export function formatDiff(
 }
 
 function handleDiffError(errValue: unknown, deps: DiffCommandDeps): void {
-  const message =
-    errValue instanceof Error ? errValue.message : String(errValue);
-  err(deps, `${message}\n`);
-  process.exit(1);
+  writeCliError(errValue, deps);
 }
 
 export function buildDiffCommand(deps: DiffCommandDeps = {}): Command {
