@@ -156,8 +156,12 @@ describe("provider APIs happy path", () => {
 
   it("lists providers and creates, tests, gets, lists, and deletes a local-file instance", async () => {
     const providers = await providerClient.listProviders();
-    expect(providers.map((provider) => provider.name)).toEqual(["local-file"]);
+    expect(providers.map((provider) => provider.name)).toEqual([
+      "local-file",
+      "doppler",
+    ]);
     expect(providers[0]?.credentialKeys).toEqual([]);
+    expect(providers[1]?.credentialKeys).toEqual(["apiToken"]);
 
     const created = await providerClient.createProviderInstance({
       provider: "local-file",

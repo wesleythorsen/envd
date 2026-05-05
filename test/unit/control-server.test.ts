@@ -402,8 +402,10 @@ describe("/v1/providers and /v1/provider-instances", () => {
     const providersBody = (await providersRes.body.json()) as {
       providers?: readonly Record<string, unknown>[];
     };
-    expect(providersBody.providers).toHaveLength(1);
-    const localFile = providersBody.providers?.[0];
+    expect(providersBody.providers).toHaveLength(2);
+    const localFile = providersBody.providers?.find(
+      (provider) => provider["name"] === "local-file",
+    );
     if (localFile === undefined) {
       throw new Error("expected local-file provider metadata");
     }
