@@ -11,6 +11,14 @@ import {
   portsFile,
 } from "../../shared/paths.js";
 import { DEnvError } from "../../shared/errors.js";
+import {
+  installLaunchdAgent as defaultInstallLaunchdAgent,
+  uninstallLaunchdAgent as defaultUninstallLaunchdAgent,
+  type LaunchdInstallOptions,
+  type LaunchdInstallResult,
+  type LaunchdUninstallOptions,
+  type LaunchdUninstallResult,
+} from "../launchd.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -53,7 +61,18 @@ interface Writable {
   write(chunk: string): unknown;
 }
 
+type InstallLaunchdAgentFn = (
+  opts: LaunchdInstallOptions,
+) => Promise<LaunchdInstallResult>;
+
+type UninstallLaunchdAgentFn = (
+  opts?: LaunchdUninstallOptions,
+) => Promise<LaunchdUninstallResult>;
+
 interface DaemonCommandDeps {
+  readonly installLaunchdAgent?: InstallLaunchdAgentFn;
+  readonly uninstallLaunchdAgent?: UninstallLaunchdAgentFn;
+  readonly resolveDaemonPath?: () => string;
   readonly stdout?: Writable;
   readonly stderr?: Writable;
 }
@@ -169,6 +188,15 @@ function writeStdout(deps: DaemonCommandDeps, text: string): void {
 
 function writeStderr(deps: DaemonCommandDeps, text: string): void {
   (deps.stderr ?? process.stderr).write(text);
+}
+
+function handleDaemonCommandError(
+  error: unknown,
+  deps: DaemonCommandDeps,
+): void {
+  const message = error instanceof Error ? error.message : String(error);
+  writeStderr(deps, `${message}\n`);
+  process.exit(1);
 }
 
 function logsUrl(tail: number, follow: boolean): string {
@@ -408,6 +436,44 @@ async function doRestart(opts: { json?: boolean }): Promise<void> {
   await doStart(opts);
 }
 
+async function doInstall(
+  opts: { json?: boolean },
+  deps: DaemonCommandDeps,
+): Promise<void> {
+  const installLaunchdAgent =
+    deps.installLaunchdAgent ?? defaultInstallLaunchdAgent;
+  const getDaemonPath = deps.resolveDaemonPath ?? resolveDaemonPath;
+  const result = await installLaunchdAgent({ daemonPath: getDaemonPath() });
+
+  if (opts.json === true) {
+    writeStdout(deps, `${JSON.stringify(result)}\n`);
+    return;
+  }
+
+  writeStdout(deps, `d-envd launchd agent installed (${result.plistPath})\n`);
+}
+
+async function doUninstall(
+  opts: { json?: boolean },
+  deps: DaemonCommandDeps,
+): Promise<void> {
+  const uninstallLaunchdAgent =
+    deps.uninstallLaunchdAgent ?? defaultUninstallLaunchdAgent;
+  const result = await uninstallLaunchdAgent();
+
+  if (opts.json === true) {
+    writeStdout(deps, `${JSON.stringify(result)}\n`);
+    return;
+  }
+
+  if (result.status === "not_installed") {
+    writeStdout(deps, `d-envd launchd agent is not installed\n`);
+    return;
+  }
+
+  writeStdout(deps, `d-envd launchd agent uninstalled (${result.plistPath})\n`);
+}
+
 // ---------------------------------------------------------------------------
 // Commander wiring
 // ---------------------------------------------------------------------------
@@ -458,10 +524,31 @@ export function buildDaemonCommand(deps: DaemonCommandDeps = {}): Command {
       try {
         await readDaemonLogs(opts, deps);
       } catch (err: unknown) {
-        const message =
-          err instanceof Error ? err.message : String(err);
-        writeStderr(deps, `${message}\n`);
-        process.exit(1);
+        handleDaemonCommandError(err, deps);
+      }
+    });
+
+  daemon
+    .command("install")
+    .description("Install the daemon as a macOS launchd agent")
+    .option("--json", "JSON output")
+    .action(async (opts: { json?: boolean }) => {
+      try {
+        await doInstall(opts, deps);
+      } catch (error: unknown) {
+        handleDaemonCommandError(error, deps);
+      }
+    });
+
+  daemon
+    .command("uninstall")
+    .description("Uninstall the macOS launchd agent")
+    .option("--json", "JSON output")
+    .action(async (opts: { json?: boolean }) => {
+      try {
+        await doUninstall(opts, deps);
+      } catch (error: unknown) {
+        handleDaemonCommandError(error, deps);
       }
     });
 

@@ -7,6 +7,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type {
+  LaunchdInstallOptions,
+  LaunchdInstallResult,
+  LaunchdUninstallResult,
+} from "../../src/cli/launchd.js";
 
 const { fetchMock } = vi.hoisted(() => {
   return {
@@ -157,5 +162,72 @@ describe("daemon logs command", () => {
       await command.parseAsync(["logs", "--tail", "1"], { from: "user" });
       expect(stdout).toBe("tail\n");
     });
+  });
+});
+
+function parseJsonOutput(stdout: string): unknown {
+  return JSON.parse(stdout) as unknown;
+}
+
+describe("daemon command launchd wiring", () => {
+  it("passes the resolved daemon path to launchd install", async () => {
+    let stdout = "";
+    let installOptions: LaunchdInstallOptions | undefined;
+    const installResult: LaunchdInstallResult = {
+      status: "installed",
+      label: "com.d-env.daemon",
+      plistPath: "/Users/test/Library/LaunchAgents/com.d-env.daemon.plist",
+    };
+
+    const { buildDaemonCommand } = await loadDaemonModule();
+    const command = buildDaemonCommand({
+      resolveDaemonPath: () => "/repo/dist/daemon/main.js",
+      installLaunchdAgent(opts) {
+        installOptions = opts;
+        return Promise.resolve(installResult);
+      },
+      stdout: {
+        write(chunk: string) {
+          stdout += chunk;
+          return true;
+        },
+      },
+    });
+
+    await command.parseAsync(["install", "--json"], { from: "user" });
+
+    expect(installOptions).toEqual({
+      daemonPath: "/repo/dist/daemon/main.js",
+    });
+    expect(parseJsonOutput(stdout)).toEqual(installResult);
+  });
+
+  it("wires daemon uninstall to the launchd helper", async () => {
+    let stdout = "";
+    let uninstallCalls = 0;
+    const uninstallResult: LaunchdUninstallResult = {
+      status: "uninstalled",
+      label: "com.d-env.daemon",
+      plistPath: "/Users/test/Library/LaunchAgents/com.d-env.daemon.plist",
+    };
+
+    const { buildDaemonCommand } = await loadDaemonModule();
+    const command = buildDaemonCommand({
+      uninstallLaunchdAgent() {
+        uninstallCalls += 1;
+        return Promise.resolve(uninstallResult);
+      },
+      stdout: {
+        write(chunk: string) {
+          stdout += chunk;
+          return true;
+        },
+      },
+    });
+
+    await command.parseAsync(["uninstall", "--json"], { from: "user" });
+
+    expect(uninstallCalls).toBe(1);
+    expect(parseJsonOutput(stdout)).toEqual(uninstallResult);
   });
 });
