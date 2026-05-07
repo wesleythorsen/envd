@@ -26,10 +26,7 @@ export interface ControlClient {
     id: string,
     input: CreateProjectEnvironmentInput,
   ): Promise<ProjectEnvironmentDetail>;
-  setProjectActiveEnvironment(
-    id: string,
-    name: string,
-  ): Promise<ProjectDetail>;
+  setProjectActiveEnvironment(id: string, name: string): Promise<ProjectDetail>;
   getProjectStatus(id: string): Promise<ProjectStatusDetail>;
   getProjectDiff(
     id: string,
@@ -116,6 +113,7 @@ export interface ProjectStatusDetail {
 
 export interface ProjectDiffOptions {
   readonly values?: boolean;
+  readonly environment?: string;
 }
 
 export interface ProjectDiffResult {
@@ -125,6 +123,7 @@ export interface ProjectDiffResult {
 
 export interface ProjectPullOptions {
   readonly force?: boolean;
+  readonly environment?: string;
 }
 
 export type ProjectCommitStrategy = "abort" | "theirs" | "ours";
@@ -132,6 +131,7 @@ export type ProjectCommitStrategy = "abort" | "theirs" | "ours";
 export interface ProjectCommitOptions {
   readonly message?: string;
   readonly strategy?: ProjectCommitStrategy;
+  readonly environment?: string;
 }
 
 export interface ProjectCommitResult {
@@ -742,7 +742,14 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
     },
 
     async getProjectDiff(id, opts) {
-      const query = opts?.values === true ? "?values=true" : "";
+      const params = new URLSearchParams();
+      if (opts?.values === true) {
+        params.set("values", "true");
+      }
+      if (opts?.environment !== undefined) {
+        params.set("environment", opts.environment);
+      }
+      const query = params.size === 0 ? "" : `?${params.toString()}`;
       return apiGet<ProjectDiffResult>(
         base,
         token,
@@ -759,6 +766,9 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
       if (opts?.strategy !== undefined) {
         body["strategy"] = opts.strategy;
       }
+      if (opts?.environment !== undefined) {
+        body["environment"] = opts.environment;
+      }
 
       return apiPostJson<ProjectCommitResult>(
         base,
@@ -774,7 +784,12 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
         base,
         token,
         `/v1/projects/${encodeURIComponent(id)}/pull`,
-        opts?.force === true ? { force: true } : {},
+        {
+          ...(opts?.force === true ? { force: true } : {}),
+          ...(opts?.environment === undefined
+            ? {}
+            : { environment: opts.environment }),
+        },
         timeoutMs,
       );
     },

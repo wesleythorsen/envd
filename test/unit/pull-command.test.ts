@@ -13,6 +13,7 @@ import type {
   ControlClient,
   ProjectDiffResult,
   ProjectPullResult,
+  ProjectDiffOptions,
 } from "../../src/ipc/control-client.js";
 
 function withTempProject(
@@ -38,11 +39,25 @@ function withTempProject(
 }
 
 function fakeClient(): ControlClient & {
-  readonly pullCalls: Array<{ id: string; force?: boolean }>;
-  readonly diffCalls: string[];
+  readonly pullCalls: Array<{
+    id: string;
+    force?: boolean;
+    environment?: string;
+  }>;
+  readonly diffCalls: Array<{
+    readonly id: string;
+    readonly opts?: ProjectDiffOptions;
+  }>;
 } {
-  const pullCalls: Array<{ id: string; force?: boolean }> = [];
-  const diffCalls: string[] = [];
+  const pullCalls: Array<{
+    id: string;
+    force?: boolean;
+    environment?: string;
+  }> = [];
+  const diffCalls: Array<{
+    readonly id: string;
+    readonly opts?: ProjectDiffOptions;
+  }> = [];
   const diffResult: ProjectDiffResult = {
     keys: { added: ["ADDED"], modified: ["MODIFIED"], deleted: ["DELETED"] },
   };
@@ -59,13 +74,19 @@ function fakeClient(): ControlClient & {
     createProject: () => Promise.reject(new Error("not needed")),
     getProject: () => Promise.reject(new Error("not needed")),
     getProjectStatus: () => Promise.reject(new Error("not needed")),
-    getProjectDiff: (id) => {
-      diffCalls.push(id);
+    getProjectDiff: (id, opts) => {
+      diffCalls.push({ id, ...(opts === undefined ? {} : { opts }) });
       return Promise.resolve(diffResult);
     },
     commitProject: () => Promise.reject(new Error("not needed")),
     pullProject: (id, opts) => {
-      pullCalls.push({ id, force: opts?.force });
+      pullCalls.push({
+        id,
+        force: opts?.force,
+        ...(opts?.environment === undefined
+          ? {}
+          : { environment: opts.environment }),
+      });
       return Promise.resolve(pullResult);
     },
     deleteProject: () => Promise.resolve(),
@@ -132,7 +153,7 @@ describe("pull command", () => {
         "Pull would discard staged changes:\n+ADDED\n~MODIFIED\n-DELETED\n",
       );
       expect(client.pullCalls).toEqual([]);
-      expect(client.diffCalls).toEqual(["project-1"]);
+      expect(client.diffCalls).toEqual([{ id: "project-1", opts: {} }]);
     });
   });
 
@@ -154,7 +175,19 @@ describe("pull command", () => {
         },
       });
       expect(client.pullCalls).toEqual([]);
-      expect(client.diffCalls).toEqual(["project-1"]);
+      expect(client.diffCalls).toEqual([{ id: "project-1", opts: {} }]);
+    });
+  });
+
+  it("forwards an explicit environment override", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = fakeClient();
+
+      await runPull([projectDir, "--environment", "stage", "--force"], client);
+
+      expect(client.pullCalls).toEqual([
+        { id: "project-1", force: true, environment: "stage" },
+      ]);
     });
   });
 });

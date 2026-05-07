@@ -17,6 +17,7 @@ interface Writable {
 
 interface PullOptions {
   readonly force?: boolean;
+  readonly environment?: string;
   readonly dryRun?: boolean;
   readonly json?: boolean;
   readonly noAutostart?: boolean;
@@ -76,12 +77,19 @@ export async function pullProject(
     return {
       status: "dry_run",
       projectId,
-      diff: await client.getProjectDiff(projectId),
+      diff: await client.getProjectDiff(projectId, {
+        ...(options.environment === undefined
+          ? {}
+          : { environment: options.environment }),
+      }),
     };
   }
 
   const result = await client.pullProject(projectId, {
     force: options.force === true,
+    ...(options.environment === undefined
+      ? {}
+      : { environment: options.environment }),
   });
   return {
     status: "pulled",
@@ -117,6 +125,7 @@ export function buildPullCommand(deps: PullCommandDeps = {}): Command {
     .description("Drop local staging and refresh the provider snapshot")
     .argument("[path]", "project directory")
     .option("--force", "discard staged changes")
+    .option("-e, --environment <name>", "environment to pull")
     .option("--dry-run", "show what would change without pulling")
     .option("--json", "JSON output")
     .option("--no-autostart", "fail instead of starting daemon support")

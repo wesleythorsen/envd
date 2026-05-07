@@ -17,6 +17,7 @@ interface Writable {
 
 interface DiffOptions {
   readonly values?: boolean;
+  readonly environment?: string;
   readonly json?: boolean;
   readonly noAutostart?: boolean;
 }
@@ -48,6 +49,9 @@ export async function diffProject(
 
   return resolveClient(deps).getProjectDiff(registration.id, {
     values: options.values === true,
+    ...(options.environment === undefined
+      ? {}
+      : { environment: options.environment }),
   });
 }
 
@@ -109,6 +113,7 @@ export function buildDiffCommand(deps: DiffCommandDeps = {}): Command {
     .description("Show staged changes against remote secrets")
     .argument("[path]", "project directory")
     .option("--values", "include secret values")
+    .option("-e, --environment <name>", "environment to diff")
     .option("--json", "JSON output")
     .option("--no-autostart", "fail instead of starting daemon support")
     .action(async (path: string | undefined, opts: DiffOptions) => {

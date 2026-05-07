@@ -138,7 +138,9 @@ describe("project APIs happy path", () => {
     expect(detail.activeEnvironment).toBe("default");
     expect(detail.mountPath).toBe(created.mountPath);
 
-    await expect(projectClient.listProjectEnvironments(created.id)).resolves.toMatchObject([
+    await expect(
+      projectClient.listProjectEnvironments(created.id),
+    ).resolves.toMatchObject([
       {
         projectId: created.id,
         name: "default",

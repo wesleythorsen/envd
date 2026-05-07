@@ -139,4 +139,19 @@ describe("diff command", () => {
       expect(JSON.parse(stdout) as unknown).toEqual(diffFixture);
     });
   });
+
+  it("forwards an explicit environment override", async () => {
+    await withTempProject(async (projectDir) => {
+      let requestedEnvironment: string | undefined;
+      const client = fakeClient({ keys: diffFixture.keys });
+      client.getProjectDiff = (_id, opts) => {
+        requestedEnvironment = opts?.environment;
+        return Promise.resolve({ keys: diffFixture.keys });
+      };
+
+      await runDiff([projectDir, "--environment", "stage"], client);
+
+      expect(requestedEnvironment).toBe("stage");
+    });
+  });
 });

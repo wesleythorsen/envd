@@ -447,6 +447,7 @@ describe("GET /v1/projects/:id/diff", () => {
       path: projectPath,
       providerInstanceId: providerInstance.id,
     });
+    projectRepo.createEnvironment(project.id, "stage");
     const cleanProject = projectRepo.create({
       path: cleanProjectPath,
       providerInstanceId: providerInstance.id,
@@ -456,6 +457,7 @@ describe("GET /v1/projects/:id/diff", () => {
       KEPT: "same",
       MODIFIED: "new",
     });
+    stagingRepo.setDesired(project.id, { STAGE_ONLY: "stage" }, "stage");
     projectId = project.id;
     cleanProjectId = cleanProject.id;
 
@@ -526,6 +528,29 @@ describe("GET /v1/projects/:id/diff", () => {
         added: { ADDED: "fresh" },
         modified: { MODIFIED: { before: "old", after: "new" } },
         deleted: { DELETED: "gone" },
+      },
+    });
+  });
+
+  it("uses the requested environment when provided", async () => {
+    const res = await request(
+      `${diffBase}/v1/projects/${projectId}/diff?environment=stage&values=true`,
+      {
+        headers: { Authorization: `Bearer ${diffToken}` },
+      },
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(await res.body.json()).toEqual({
+      keys: {
+        added: ["STAGE_ONLY"],
+        modified: [],
+        deleted: ["DELETED", "KEPT", "MODIFIED"],
+      },
+      values: {
+        added: { STAGE_ONLY: "stage" },
+        modified: {},
+        deleted: { DELETED: "gone", KEPT: "same", MODIFIED: "old" },
       },
     });
   });

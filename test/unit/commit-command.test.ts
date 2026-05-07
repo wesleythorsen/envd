@@ -14,6 +14,8 @@ import type {
   ProjectCommitResult,
   ProjectDiffResult,
   ProjectCommitStrategy,
+  ProjectCommitOptions,
+  ProjectDiffOptions,
 } from "../../src/ipc/control-client.js";
 import { EnvdError } from "../../src/shared/errors.js";
 
@@ -44,25 +46,30 @@ function fakeClient(
     readonly diffResult?: ProjectDiffResult;
     readonly commitImpl?: (
       id: string,
-      input: {
-        readonly message?: string;
-        readonly strategy?: ProjectCommitStrategy;
-      },
+      input: ProjectCommitOptions,
     ) => Promise<ProjectCommitResult>;
   } = {},
 ): ControlClient & {
-  readonly diffCalls: string[];
+  readonly diffCalls: Array<{
+    readonly id: string;
+    readonly opts?: ProjectDiffOptions;
+  }>;
   readonly commitCalls: Array<{
     readonly id: string;
     readonly message?: string;
     readonly strategy?: ProjectCommitStrategy;
+    readonly environment?: string;
   }>;
 } {
-  const diffCalls: string[] = [];
+  const diffCalls: Array<{
+    readonly id: string;
+    readonly opts?: ProjectDiffOptions;
+  }> = [];
   const commitCalls: Array<{
     readonly id: string;
     readonly message?: string;
     readonly strategy?: ProjectCommitStrategy;
+    readonly environment?: string;
   }> = [];
   const diffResult =
     opts.diffResult ??
@@ -79,8 +86,8 @@ function fakeClient(
     createProject: () => Promise.reject(new Error("not needed")),
     getProject: () => Promise.reject(new Error("not needed")),
     getProjectStatus: () => Promise.reject(new Error("not needed")),
-    getProjectDiff: (id) => {
-      diffCalls.push(id);
+    getProjectDiff: (id, opts) => {
+      diffCalls.push({ id, ...(opts === undefined ? {} : { opts }) });
       return Promise.resolve(diffResult);
     },
     commitProject: (id, input) => {
@@ -179,7 +186,7 @@ describe("commit command", () => {
           "envd committed (upserts=1, deletes=1)\n",
       );
       expect(confirm).toHaveBeenCalledWith("Commit these staged changes?");
-      expect(client.diffCalls).toEqual(["project-1"]);
+      expect(client.diffCalls).toEqual([{ id: "project-1", opts: {} }]);
       expect(client.commitCalls).toEqual([
         {
           id: "project-1",
@@ -209,6 +216,26 @@ describe("commit command", () => {
         {
           id: "project-1",
           strategy: "theirs",
+        },
+      ]);
+    });
+  });
+
+  it("forwards an explicit environment override", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = fakeClient();
+
+      const result = await runCommit(
+        [projectDir, "--yes", "--environment", "stage"],
+        client,
+      );
+
+      expect(result.exitCode).toBeUndefined();
+      expect(client.commitCalls).toEqual([
+        {
+          id: "project-1",
+          strategy: "abort",
+          environment: "stage",
         },
       ]);
     });

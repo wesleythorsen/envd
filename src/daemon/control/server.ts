@@ -10,7 +10,7 @@ import { readLogTail } from "../../shared/log-file.js";
 import { createLogger, subscribeLogLines } from "../../shared/logger.js";
 import { safeErrorLogData } from "../../shared/log-safety.js";
 import { EnvdError, type ErrorCode } from "../../shared/errors.js";
-import type { ProjectRepo } from "../../core/project.js";
+import type { Project, ProjectRepo } from "../../core/project.js";
 import { createCache, type Cache, type CacheResult } from "../../core/cache.js";
 import type { StagedDesiredMap, StagingRepo } from "../../core/staging.js";
 import {
@@ -515,6 +515,47 @@ function requestIncludesValues(req: IncomingMessage): boolean {
   }
 }
 
+function requestEnvironment(req: IncomingMessage): string | undefined {
+  try {
+    const value = new URL(req.url ?? "/", "http://localhost").searchParams.get(
+      "environment",
+    );
+    return value === null || value === "" ? undefined : value;
+  } catch {
+    return undefined;
+  }
+}
+
+function environmentFromBody(
+  body: Record<string, unknown>,
+): string | undefined {
+  const environment = body["environment"];
+  if (environment === undefined) {
+    return undefined;
+  }
+  if (typeof environment !== "string" || environment.trim() === "") {
+    throw new EnvdError("environment must be a non-empty string", {
+      code: "usage_error",
+    });
+  }
+  return environment;
+}
+
+function resolveProjectEnvironment(
+  projects: ProjectRepo,
+  project: Project,
+  requested: string | undefined,
+): string {
+  const environment = requested ?? project.activeEnvironment;
+  if (projects.getEnvironment(project.id, environment) === undefined) {
+    throw new EnvdError("environment does not exist", {
+      code: "not_found",
+      details: { projectId: project.id, environment },
+    });
+  }
+  return environment;
+}
+
 function stagedDesiredToSecretMap(desired: StagedDesiredMap): SecretMap {
   const map: Record<string, string> = {};
   for (const [key, value] of Object.entries(desired)) {
@@ -722,7 +763,12 @@ async function handleGetProjectDiff(
   }
 
   const includeValues = requestIncludesValues(req);
-  const desired = staging.getDesired(id, project.activeEnvironment);
+  const environment = resolveProjectEnvironment(
+    projects,
+    project,
+    requestEnvironment(req),
+  );
+  const desired = staging.getDesired(id, environment);
   if (desired === undefined) {
     writeJson(
       res,
@@ -841,7 +887,10 @@ async function handleGetProjectStatus(
   });
 }
 
-function parseProjectPullBody(body: unknown): { force: boolean } {
+function parseProjectPullBody(body: unknown): {
+  force: boolean;
+  environment?: string;
+} {
   if (!isRecord(body)) {
     throw new EnvdError("request body must be a JSON object", {
       code: "usage_error",
@@ -855,12 +904,17 @@ function parseProjectPullBody(body: unknown): { force: boolean } {
     });
   }
 
-  return { force: force === true };
+  const environment = environmentFromBody(body);
+  return {
+    force: force === true,
+    ...(environment === undefined ? {} : { environment }),
+  };
 }
 
 interface ParsedProjectCommitBody {
   readonly message?: string;
   readonly strategy: "abort" | "theirs" | "ours";
+  readonly environment?: string;
 }
 
 function parseProjectCommitBody(body: unknown): ParsedProjectCommitBody {
@@ -878,11 +932,14 @@ function parseProjectCommitBody(body: unknown): ParsedProjectCommitBody {
   }
   const parsedMessage = typeof message === "string" ? message : undefined;
 
+  const environment = environmentFromBody(body);
   const strategy = body["strategy"];
   if (strategy === undefined) {
-    return parsedMessage === undefined
-      ? { strategy: "abort" }
-      : { message: parsedMessage, strategy: "abort" };
+    return {
+      ...(parsedMessage === undefined ? {} : { message: parsedMessage }),
+      ...(environment === undefined ? {} : { environment }),
+      strategy: "abort",
+    };
   }
   if (strategy !== "abort" && strategy !== "theirs" && strategy !== "ours") {
     throw new EnvdError("strategy must be one of abort, theirs, or ours", {
@@ -890,9 +947,11 @@ function parseProjectCommitBody(body: unknown): ParsedProjectCommitBody {
     });
   }
 
-  return parsedMessage === undefined
-    ? { strategy }
-    : { message: parsedMessage, strategy };
+  return {
+    ...(parsedMessage === undefined ? {} : { message: parsedMessage }),
+    ...(environment === undefined ? {} : { environment }),
+    strategy,
+  };
 }
 
 function secretValue(map: SecretMap, key: string): string | null {
@@ -1046,7 +1105,12 @@ async function handlePullProject(
   }
 
   const input = parseProjectPullBody(await readJsonBody(req));
-  const desired = staging.getDesired(id, project.activeEnvironment);
+  const environment = resolveProjectEnvironment(
+    projects,
+    project,
+    input.environment,
+  );
+  const desired = staging.getDesired(id, environment);
   if (desired !== undefined && !input.force) {
     writeJsonError(
       res,
@@ -1058,10 +1122,10 @@ async function handlePullProject(
     return;
   }
 
-  staging.clear(id, project.activeEnvironment);
+  staging.clear(id, environment);
   const snapshot = await refreshProjectSecrets(
     id,
-    project.activeEnvironment,
+    environment,
     project.providerInstanceId,
     providerInstanceRepo,
     keychain,
@@ -1089,11 +1153,16 @@ async function handleCommitProject(
   }
 
   const input = parseProjectCommitBody(await readJsonBody(req));
-  const stagedDesired = staging.getDesired(id, project.activeEnvironment);
+  const environment = resolveProjectEnvironment(
+    projects,
+    project,
+    input.environment,
+  );
+  const stagedDesired = staging.getDesired(id, environment);
   if (stagedDesired === undefined) {
     await refreshProjectSecrets(
       id,
-      project.activeEnvironment,
+      environment,
       project.providerInstanceId,
       providerInstanceRepo,
       keychain,
@@ -1109,7 +1178,7 @@ async function handleCommitProject(
   const desired = stagedDesiredToSecretMap(stagedDesired);
   const baseline = await readBaselineProjectSecrets(
     id,
-    project.activeEnvironment,
+    environment,
     project.providerInstanceId,
     providerInstanceRepo,
     keychain,
@@ -1117,7 +1186,7 @@ async function handleCommitProject(
   );
   const fresh = await refreshProjectSecrets(
     id,
-    project.activeEnvironment,
+    environment,
     project.providerInstanceId,
     providerInstanceRepo,
     keychain,
@@ -1146,8 +1215,8 @@ async function handleCommitProject(
   const changes = toChangeSet(fresh.value, finalDesired);
 
   if (isEmptyChangeSet(changes)) {
-    staging.clear(id, project.activeEnvironment);
-    cache.invalidate(scopedProjectKey(id, project.activeEnvironment));
+    staging.clear(id, environment);
+    cache.invalidate(scopedProjectKey(id, environment));
     writeJson(res, 200, { applied: changes, commitId: null });
     return;
   }
@@ -1173,8 +1242,8 @@ async function handleCommitProject(
     return;
   }
 
-  staging.clear(id, project.activeEnvironment);
-  cache.invalidate(scopedProjectKey(id, project.activeEnvironment));
+  staging.clear(id, environment);
+  cache.invalidate(scopedProjectKey(id, environment));
   writeJson(res, 200, { applied: result.applied, commitId: null });
 }
 

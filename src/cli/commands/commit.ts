@@ -27,6 +27,7 @@ type ConfirmFn = (question: string) => Promise<boolean>;
 
 interface CommitOptions {
   readonly message?: string;
+  readonly environment?: string;
   readonly theirs?: boolean;
   readonly ours?: boolean;
   readonly yes?: boolean;
@@ -114,7 +115,11 @@ async function confirmCommit(
     return;
   }
 
-  const diff = await client.getProjectDiff(projectId);
+  const diff = await client.getProjectDiff(projectId, {
+    ...(options.environment === undefined
+      ? {}
+      : { environment: options.environment }),
+  });
   if (!hasDiff(diff)) {
     return;
   }
@@ -143,8 +148,19 @@ export async function commitProject(
   await confirmCommit(client, projectId, options, deps);
   const commitOptions =
     options.message === undefined
-      ? { strategy }
-      : { message: options.message, strategy };
+      ? {
+          strategy,
+          ...(options.environment === undefined
+            ? {}
+            : { environment: options.environment }),
+        }
+      : {
+          message: options.message,
+          strategy,
+          ...(options.environment === undefined
+            ? {}
+            : { environment: options.environment }),
+        };
   const result = await client.commitProject(projectId, commitOptions);
 
   return {
@@ -213,6 +229,7 @@ export function buildCommitCommand(deps: CommitCommandDeps = {}): Command {
     .description("Push staged changes to the configured provider")
     .argument("[path]", "project directory")
     .option("-m, --message <message>", "provider commit message")
+    .option("-e, --environment <name>", "environment to commit")
     .option("--theirs", "resolve conflicts by accepting upstream values")
     .option("--ours", "resolve conflicts by keeping local staged values")
     .option("--yes", "skip the staged-change confirmation prompt")
