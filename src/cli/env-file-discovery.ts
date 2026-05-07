@@ -48,6 +48,12 @@ export interface EnvFileDiscoveryResult {
 
 export interface EnvFileDiscoveryOptions {
   readonly scanPaths?: readonly string[];
+  readonly envFiles?: readonly ExplicitEnvFileMapping[];
+}
+
+export interface ExplicitEnvFileMapping {
+  readonly environment: string;
+  readonly path: string;
 }
 
 interface ScanRoot {
@@ -118,6 +124,15 @@ function classification(
     confidence,
     ambiguous: confidence !== "high",
     reasons,
+  };
+}
+
+function explicitClassification(environment: string): EnvFileClassification {
+  return {
+    environment,
+    confidence: "high",
+    ambiguous: false,
+    reasons: ["explicit env-file mapping"],
   };
 }
 
@@ -261,6 +276,7 @@ function parseError(
 function discoverParsedFiles(
   projectDir: string,
   paths: readonly string[],
+  explicitMappings: ReadonlyMap<string, string>,
 ): {
   readonly parsed: readonly ParsedEnvFile[];
   readonly parseErrors: readonly EnvFileParseError[];
@@ -269,7 +285,11 @@ function discoverParsedFiles(
   const parseErrors: EnvFileParseError[] = [];
 
   for (const path of paths) {
-    const classification = classifyEnvFileName(path);
+    const explicitEnvironment = explicitMappings.get(path);
+    const classification =
+      explicitEnvironment === undefined
+        ? classifyEnvFileName(path)
+        : explicitClassification(explicitEnvironment);
     if (classification === null) {
       continue;
     }
@@ -342,6 +362,7 @@ export function discoverEnvFiles(
   options: EnvFileDiscoveryOptions = {},
 ): EnvFileDiscoveryResult {
   const candidatePaths = new Set<string>();
+  const explicitMappings = new Map<string, string>();
   const roots = [
     ...defaultScanRoots(projectDir),
     ...explicitScanRoots(projectDir, options.scanPaths ?? []),
@@ -351,8 +372,18 @@ export function discoverEnvFiles(
     collectCandidateFiles(root, candidatePaths);
   }
 
+  for (const mapping of options.envFiles ?? []) {
+    const path = resolve(projectDir, mapping.path);
+    candidatePaths.add(path);
+    explicitMappings.set(path, mapping.environment);
+  }
+
   const paths = [...candidatePaths].sort();
-  const { parsed, parseErrors } = discoverParsedFiles(projectDir, paths);
+  const { parsed, parseErrors } = discoverParsedFiles(
+    projectDir,
+    paths,
+    explicitMappings,
+  );
 
   return {
     files: parsed.map((file) => file.file),

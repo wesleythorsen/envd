@@ -32,6 +32,7 @@ import {
 } from "../config-file.js";
 import {
   discoverEnvFiles,
+  type ExplicitEnvFileMapping,
   type EnvFileDiscoveryResult,
 } from "../env-file-discovery.js";
 
@@ -40,11 +41,16 @@ interface InitOptions {
   readonly json?: boolean;
   readonly providerInstance?: string;
   readonly provider?: string;
+  readonly newProvider?: boolean;
+  readonly providerType?: string;
+  readonly providerName?: string;
   readonly providerInstanceName?: string;
   readonly configJson?: string;
   readonly credentialsJson?: string;
   readonly noAutostart?: boolean;
   readonly scan?: readonly string[];
+  readonly envFile?: readonly string[];
+  readonly active?: string;
 }
 
 interface InitProjectDeps {
@@ -132,6 +138,23 @@ function defaultPrompt(
 
 function collectOption(value: string, previous: readonly string[]): string[] {
   return [...previous, value];
+}
+
+function parseEnvFileMapping(raw: string): ExplicitEnvFileMapping {
+  const separator = raw.indexOf("=");
+  if (separator <= 0 || separator === raw.length - 1) {
+    throw new EnvdError("--env-file must use <env>=<path>", {
+      code: "usage_error",
+    });
+  }
+  const environment = raw.slice(0, separator).trim();
+  const path = raw.slice(separator + 1).trim();
+  if (environment === "" || path === "") {
+    throw new EnvdError("--env-file must use non-empty env and path values", {
+      code: "usage_error",
+    });
+  }
+  return { environment, path };
 }
 
 function uniqueSorted(values: Iterable<string>): readonly string[] {
@@ -313,6 +336,14 @@ function validateNonInteractivePlan(plan: InitAdoptionPlan): void {
         },
       },
     );
+  }
+
+  const ambiguous = plan.files.filter((file) => file.ambiguous);
+  if (ambiguous.length > 0) {
+    throw new EnvdError("env file mappings are ambiguous", {
+      code: "usage_error",
+      details: { files: ambiguous.map((file) => file.relativePath) },
+    });
   }
 }
 
@@ -617,7 +648,12 @@ function providerAddOptions(
     configJson?: string;
     credentialsJson?: string;
   } = {};
-  if (options.providerInstanceName !== undefined) {
+  if (options.providerName !== undefined) {
+    addOptions.name = requireNonEmptyFlag(
+      options.providerName,
+      "--provider-name",
+    );
+  } else if (options.providerInstanceName !== undefined) {
     addOptions.name = requireNonEmptyFlag(
       options.providerInstanceName,
       "--provider-instance-name",
@@ -642,6 +678,9 @@ function validateProviderInstanceFlags(options: InitOptions): void {
   requireNonEmptyFlag(options.providerInstance, "--provider-instance");
   if (
     options.provider !== undefined ||
+    options.newProvider === true ||
+    options.providerType !== undefined ||
+    options.providerName !== undefined ||
     options.providerInstanceName !== undefined ||
     options.configJson !== undefined ||
     options.credentialsJson !== undefined
@@ -710,20 +749,83 @@ function newProviderTarget(
     : { kind: "new", provider, name };
 }
 
+async function providerInstanceTargetByName(
+  options: InitOptions,
+  deps: InitProjectDeps,
+): Promise<InitProviderTarget> {
+  const providerName = requireNonEmptyFlag(
+    options.provider ?? "",
+    "--provider",
+  );
+  const instances = await deps.client.listProviderInstances();
+  const instance = instances.find(
+    (candidate) =>
+      candidate.name === providerName || candidate.id === providerName,
+  );
+  if (instance === undefined) {
+    throw new EnvdError("provider instance was not found", {
+      code: "usage_error",
+      details: { provider: providerName },
+    });
+  }
+  return {
+    kind: "existing",
+    id: instance.id,
+    provider: instance.provider,
+    name: instance.name,
+  };
+}
+
+function validateNewProviderFlags(options: InitOptions): void {
+  if (options.newProvider !== true) {
+    if (
+      options.providerType !== undefined ||
+      options.providerName !== undefined
+    ) {
+      throw new EnvdError(
+        "--provider-type and --provider-name require --new-provider",
+        { code: "usage_error" },
+      );
+    }
+    return;
+  }
+
+  if (options.provider !== undefined) {
+    throw new EnvdError("--provider cannot be combined with --new-provider", {
+      code: "usage_error",
+    });
+  }
+  if (options.providerType !== undefined) {
+    requireNonEmptyFlag(options.providerType, "--provider-type");
+  }
+  if (options.providerName !== undefined) {
+    requireNonEmptyFlag(options.providerName, "--provider-name");
+  }
+}
+
 async function selectProviderTarget(
   options: InitOptions,
   deps: InitProjectDeps,
 ): Promise<InitProviderTarget> {
   validateProviderInstanceFlags(options);
+  validateNewProviderFlags(options);
   if (options.providerInstance !== undefined) {
     return providerInstanceTarget(deps, options.providerInstance);
   }
 
+  if (options.newProvider === true) {
+    const provider =
+      options.providerType === undefined
+        ? await promptProviderName(
+            await deps.client.listProviders(),
+            deps.prompt ?? defaultPrompt,
+          )
+        : requireNonEmptyFlag(options.providerType, "--provider-type");
+    return newProviderTarget(provider, options.providerName);
+  }
+
   if (options.provider !== undefined) {
-    return newProviderTarget(
-      requireNonEmptyFlag(options.provider, "--provider"),
-      options.providerInstanceName,
-    );
+    return providerInstanceTargetByName(options, deps);
   }
 
   const instances = await deps.client.listProviderInstances();
@@ -733,7 +835,7 @@ async function selectProviderTarget(
         await deps.client.listProviders(),
         deps.prompt ?? defaultPrompt,
       ),
-      options.providerInstanceName,
+      options.providerName ?? options.providerInstanceName,
     );
   }
 
@@ -749,7 +851,7 @@ async function selectProviderTarget(
       await deps.client.listProviders(),
       deps.prompt ?? defaultPrompt,
     ),
-    options.providerInstanceName,
+    options.providerName ?? options.providerInstanceName,
   );
 }
 
@@ -789,13 +891,23 @@ export async function initProject(
 
   const envFiles = discoverEnvFiles(projectDir, {
     scanPaths: options.scan ?? [],
+    envFiles: (options.envFile ?? []).map(parseEnvFileMapping),
   });
   let registration = findProjectRegistration(projectDir);
   const providerTarget =
     registration?.providerInstanceId === undefined
       ? await selectProviderTarget(options, deps)
       : await providerInstanceTarget(deps, registration.providerInstanceId);
-  let adoptionPlan = buildAdoptionPlan(projectDir, envFiles, providerTarget);
+  const activeEnvironment =
+    options.active === undefined
+      ? undefined
+      : requireNonEmptyFlag(options.active, "--active");
+  let adoptionPlan = buildAdoptionPlan(
+    projectDir,
+    envFiles,
+    providerTarget,
+    activeEnvironment === undefined ? {} : { activeEnvironment },
+  );
 
   if (options.yes === true) {
     validateNonInteractivePlan(adoptionPlan);
@@ -851,11 +963,24 @@ export function buildInitCommand(): Command {
     .description("Initialize envd in a project directory")
     .argument("[path]", "project directory")
     .option("--yes", "skip confirmation prompt")
+    .option(
+      "--env-file <env=path>",
+      "explicit env file mapping",
+      collectOption,
+      [],
+    )
+    .option("--active <env>", "active environment after init")
     .option("--provider-instance <id>", "provider instance id to use")
-    .option("--provider <name>", "provider name to create and use")
+    .option("--provider <name>", "existing provider instance/org name or id")
+    .option("--new-provider", "create a provider instance during init")
+    .option("--provider-type <type>", "provider type for --new-provider")
+    .option(
+      "--provider-name <name>",
+      "provider instance/org name for --new-provider",
+    )
     .option(
       "--provider-instance-name <name>",
-      "display name when creating a provider instance",
+      "deprecated alias for --provider-name",
     )
     .option("--config-json <json>", "provider config JSON for auto-create")
     .option(

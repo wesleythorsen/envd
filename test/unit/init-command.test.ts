@@ -458,6 +458,95 @@ describe("initProject", () => {
     });
   });
 
+  it("selects an existing provider instance by provider name flag", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = new FakeControlClient(
+        "/Volumes/envd/p/project-1.token-1/.env",
+        {
+          providerInstances: [
+            {
+              id: "instance-work",
+              provider: "local-file",
+              name: "work",
+              config: { path: "/tmp/secrets.json" },
+              createdAt: 1,
+            },
+          ],
+        },
+      );
+
+      await initProject(
+        projectDir,
+        { yes: true, provider: "work" },
+        {
+          client,
+          ensureMount: false,
+          prompt: () => Promise.reject(new Error("unexpected prompt")),
+        },
+      );
+
+      expect(client.createProviderInstanceCalls).toBe(0);
+      expect(client.lastCreateProjectInput).toEqual({
+        path: projectDir,
+        providerInstanceId: "instance-work",
+      });
+    });
+  });
+
+  it("uses explicit env-file mappings and active environment for scripted init", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = new FakeControlClient(
+        "/Volumes/envd/p/project-1.token-1/.env",
+      );
+      writeFileSync(join(projectDir, "secrets.dev"), "DEV=1\n", "utf-8");
+      writeFileSync(join(projectDir, "secrets.stage"), "STAGE=1\n", "utf-8");
+
+      const result = await initProject(
+        projectDir,
+        {
+          yes: true,
+          providerInstance: "instance-1",
+          envFile: ["dev=secrets.dev", "stage=secrets.stage"],
+          active: "stage",
+        },
+        { client, ensureMount: false },
+      );
+
+      expect(result.adoptionPlan.files.map((file) => file.environment)).toEqual(
+        ["dev", "stage"],
+      );
+      expect(result.adoptionPlan.activeEnvironment).toBe("stage");
+      expect(client.createdEnvironments).toEqual([
+        { id: "project-1", name: "dev" },
+        { id: "project-1", name: "stage" },
+      ]);
+      expect(client.activeEnvironmentChanges).toEqual([
+        { id: "project-1", name: "stage" },
+      ]);
+    });
+  });
+
+  it("fails non-interactive init when inferred mappings are ambiguous", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = new FakeControlClient(
+        "/Volumes/envd/p/project-1.token-1/.env",
+      );
+      writeFileSync(join(projectDir, ".env.local"), "LOCAL=1\n", "utf-8");
+
+      await expect(
+        initProject(
+          projectDir,
+          { yes: true, providerInstance: "instance-1" },
+          { client, ensureMount: false },
+        ),
+      ).rejects.toSatisfy((error: unknown) => {
+        return error instanceof EnvdError && error.code === "usage_error";
+      });
+
+      expect(client.createProjectCalls).toBe(0);
+    });
+  });
+
   it("creates a provider instance through provider-add prompts when none exist", async () => {
     await withTempProject(async (projectDir) => {
       const client = new FakeControlClient(
@@ -498,8 +587,9 @@ describe("initProject", () => {
         projectDir,
         {
           yes: true,
-          provider: "local-file",
-          providerInstanceName: "CI local",
+          newProvider: true,
+          providerType: "local-file",
+          providerName: "CI local",
           configJson: '{"path":"/tmp/secrets.json"}',
           credentialsJson: "{}",
         },
@@ -533,7 +623,8 @@ describe("initProject", () => {
         projectDir,
         {
           yes: true,
-          provider: "local-file",
+          newProvider: true,
+          providerType: "local-file",
           configJson: '{"path":"/tmp/secrets.json"}',
           credentialsJson: "{}",
         },
