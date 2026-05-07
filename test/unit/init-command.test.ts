@@ -8,6 +8,7 @@ import {
   realpathSync,
   rmSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -266,6 +267,42 @@ describe("initProject", () => {
       expect(
         readFileSync(join(projectDir, "..", "config.toml"), "utf-8"),
       ).not.toContain("token-1");
+    });
+  });
+
+  it("returns discovered env files from default and explicit scan paths", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = new FakeControlClient(
+        "/Volumes/envd/p/project-1.token-1/.env",
+      );
+      mkdirSync(join(projectDir, "env"));
+      mkdirSync(join(projectDir, "packages", "api"), { recursive: true });
+      writeFileSync(join(projectDir, ".env.dev"), "DEV=1\n", "utf-8");
+      writeFileSync(join(projectDir, "env", "stage.env"), "STAGE=1\n", "utf-8");
+      writeFileSync(
+        join(projectDir, "packages", "api", ".env.prod"),
+        "PROD=1\n",
+        "utf-8",
+      );
+
+      const result = await initProject(
+        projectDir,
+        {
+          yes: true,
+          providerInstance: "instance-1",
+          scan: ["packages/api"],
+        },
+        { client, ensureMount: false },
+      );
+
+      expect(result.envFiles.files.map((file) => file.relativePath)).toEqual([
+        ".env.dev",
+        "env/stage.env",
+        "packages/api/.env.prod",
+      ]);
+      expect(
+        result.envFiles.files.map((file) => file.classification.environment),
+      ).toEqual(["dev", "stage", "prod"]);
     });
   });
 

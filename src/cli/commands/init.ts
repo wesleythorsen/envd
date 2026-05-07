@@ -29,6 +29,10 @@ import {
   resolveProjectRoot,
   type ProjectRegistration,
 } from "../config-file.js";
+import {
+  discoverEnvFiles,
+  type EnvFileDiscoveryResult,
+} from "../env-file-discovery.js";
 
 interface InitOptions {
   readonly yes?: boolean;
@@ -39,6 +43,7 @@ interface InitOptions {
   readonly configJson?: string;
   readonly credentialsJson?: string;
   readonly noAutostart?: boolean;
+  readonly scan?: readonly string[];
 }
 
 interface InitProjectDeps {
@@ -55,6 +60,7 @@ export interface InitResult {
   readonly projectId: string;
   readonly envPath: string;
   readonly symlinkTarget: string;
+  readonly envFiles: EnvFileDiscoveryResult;
 }
 
 function readWebdavUrl(): string {
@@ -82,6 +88,10 @@ function defaultPrompt(
   return rl.question(`${question}${suffix}: `).finally(() => {
     rl.close();
   });
+}
+
+function collectOption(value: string, previous: readonly string[]): string[] {
+  return [...previous, value];
 }
 
 async function ensureMounted(adapter: MountAdapter): Promise<void> {
@@ -116,6 +126,7 @@ async function existingProjectResult(
   client: ControlClient,
   projectDir: string,
   registration: ProjectRegistration,
+  envFiles: EnvFileDiscoveryResult,
 ): Promise<InitResult> {
   let project: ProjectDetail;
   try {
@@ -138,6 +149,7 @@ async function existingProjectResult(
     projectId: project.id,
     envPath: join(projectDir, ENV_FILE),
     symlinkTarget: project.mountPath,
+    envFiles,
   };
 }
 
@@ -145,6 +157,7 @@ async function newProjectResult(
   client: ControlClient,
   projectDir: string,
   providerInstanceId: string,
+  envFiles: EnvFileDiscoveryResult,
 ): Promise<InitResult> {
   const created: CreateProjectResult = await client.createProject({
     path: projectDir,
@@ -165,6 +178,7 @@ async function newProjectResult(
     projectId: created.id,
     envPath: join(projectDir, ENV_FILE),
     symlinkTarget: created.mountPath,
+    envFiles,
   };
 }
 
@@ -433,13 +447,26 @@ export async function initProject(
   }
 
   migrateLegacyProjectFile(projectDir);
+  const envFiles = discoverEnvFiles(projectDir, {
+    scanPaths: options.scan ?? [],
+  });
   const registration = findProjectRegistration(projectDir);
   if (registration !== null) {
-    return existingProjectResult(deps.client, projectDir, registration);
+    return existingProjectResult(
+      deps.client,
+      projectDir,
+      registration,
+      envFiles,
+    );
   }
 
   const providerInstanceId = await selectProviderInstanceId(options, deps);
-  return newProjectResult(deps.client, projectDir, providerInstanceId);
+  return newProjectResult(
+    deps.client,
+    projectDir,
+    providerInstanceId,
+    envFiles,
+  );
 }
 
 export function buildInitCommand(): Command {
@@ -459,6 +486,7 @@ export function buildInitCommand(): Command {
       "provider credentials JSON for auto-create",
     )
     .option("--json", "JSON output")
+    .option("--scan <path>", "additional env file scan path", collectOption, [])
     .option("--no-autostart", "fail instead of starting daemon/mount support")
     .action(async (path: string | undefined, opts: InitOptions) => {
       try {
