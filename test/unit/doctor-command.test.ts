@@ -185,6 +185,45 @@ describe("doctor command helpers", () => {
     });
   });
 
+  it("repairs an unavailable mount with --fix when the daemon is running", async () => {
+    await withTempProject(async (projectDir) => {
+      const base = healthyStatus(projectDir);
+      const mountCalls: Array<{ url: string; path: string }> = [];
+      const result = await doctorProject(
+        { path: projectDir, fix: true },
+        {
+          getStatus: () =>
+            Promise.resolve({
+              ...base,
+              mount: {
+                path: "/tmp/envd-mount",
+                mounted: false,
+                error: null,
+              },
+            }),
+          mountAdapter: {
+            platform: "darwin",
+            isMounted: () => Promise.resolve(false),
+            mount: (url, path) => {
+              mountCalls.push({ url, path });
+              return Promise.resolve();
+            },
+            unmount: () => Promise.resolve(),
+          },
+        },
+      );
+
+      expect(check(result, "mount")).toMatchObject({
+        status: "warning",
+        fixable: true,
+        fixed: true,
+      });
+      expect(mountCalls).toEqual([
+        { url: "http://127.0.0.1:1911/", path: "/tmp/envd-mount" },
+      ]);
+    });
+  });
+
   it("reports provider health failures", async () => {
     await withTempProject(async (projectDir) => {
       const base = healthyStatus(projectDir);

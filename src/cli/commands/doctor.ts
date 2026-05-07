@@ -6,6 +6,7 @@ import { controlTokenFile, pidFile, portsFile } from "../../shared/paths.js";
 import { writeCliError } from "../error-output.js";
 import { ENV_FILE, ensureEnvSymlink, isEnvdSymlink } from "../project-files.js";
 import { resolveProjectRoot } from "../config-file.js";
+import { createMountAdapter } from "../../mount/index.js";
 
 type DoctorCheckStatus = "ok" | "warning" | "error";
 
@@ -188,6 +189,53 @@ function runtimeChecks(
   return checks;
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+async function mountCheck(
+  status: StatusResult,
+  options: DoctorOptions,
+  deps: DoctorDeps,
+): Promise<DoctorCheck> {
+  if (status.mount.mounted) {
+    return ok("mount", "mount is available");
+  }
+
+  const canFix =
+    status.daemon.running &&
+    status.daemon.ports !== null &&
+    status.mount.path !== null;
+  let fixed = false;
+  let repairError: string | undefined;
+
+  if (options.fix === true && canFix) {
+    try {
+      const adapter =
+        deps.mountAdapter ??
+        (await (deps.createMountAdapter ?? createMountAdapter)());
+      await adapter.mount(
+        `http://127.0.0.1:${status.daemon.ports.webdav}/`,
+        status.mount.path,
+      );
+      fixed = true;
+    } catch (err: unknown) {
+      repairError = errorMessage(err);
+    }
+  }
+
+  const detail =
+    repairError === undefined
+      ? (status.mount.error ?? status.mount.path ?? "")
+      : `${status.mount.error ?? status.mount.path ?? ""}; repair failed: ${repairError}`;
+
+  return issue("mount", "warning", "mount is not available", {
+    detail,
+    fixable: canFix,
+    fixed,
+  });
+}
+
 function projectChecks(
   status: StatusResult,
   projectDir: string,
@@ -287,16 +335,7 @@ export async function doctorProject(
         ),
     tokenCheck,
     ...runtimeChecks(status, options, deps),
-    status.mount.mounted
-      ? ok("mount", "mount is available")
-      : issue(
-          "mount",
-          "warning",
-          "mount is not available",
-          status.mount.error === null && status.mount.path === null
-            ? {}
-            : { detail: status.mount.error ?? status.mount.path ?? "" },
-        ),
+    await mountCheck(status, options, deps),
     ...projectChecks(status, projectDir, options),
   ];
   const hasIssues = checks.some((check) => check.status !== "ok");

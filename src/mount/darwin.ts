@@ -25,6 +25,11 @@ export type MkdirFn = (
   opts: { recursive: true },
 ) => Promise<string | undefined>;
 
+interface MountEntry {
+  readonly source: string;
+  readonly path: string;
+}
+
 /**
  * Default runner using `execFile` (no shell, no injection risk).
  * Resolves with { stdout, stderr, code } even on non-zero exit.
@@ -69,17 +74,13 @@ export class DarwinMountAdapter implements MountAdapter {
    *   <device>|<url> on <mountpoint> (<type>, ...)
    */
   async isMounted(path: string): Promise<boolean> {
-    const { stdout } = await this.run("/sbin/mount", []);
-    // Normalise trailing slash so /Volumes/foo and /Volumes/foo/ both match.
     const target = path.endsWith("/") ? path.slice(0, -1) : path;
-    for (const line of stdout.split("\n")) {
-      // Match "... on <mountpoint> ..."
-      const match = / on (.+?) \(/.exec(line);
-      if (match !== null) {
-        const mp = match[1]?.endsWith("/") ? match[1].slice(0, -1) : match[1];
-        if (mp === target) {
-          return true;
-        }
+    for (const entry of await this.mountEntries()) {
+      const mountedPath = entry.path.endsWith("/")
+        ? entry.path.slice(0, -1)
+        : entry.path;
+      if (mountedPath === target) {
+        return true;
       }
     }
     return false;
@@ -96,18 +97,28 @@ export class DarwinMountAdapter implements MountAdapter {
     await this.mkdirFn(path, { recursive: true });
 
     // -S suppresses auth UI; -v sets the display name shown in Finder.
-    const { stderr, code } = await this.run("/sbin/mount_webdav", [
-      "-S",
-      "-v",
-      "envd",
-      url,
-      path,
-    ]);
+    let result = await this.mountWebdav(url, path);
 
-    if (code !== 0) {
-      throw new EnvdError("mount_webdav failed", {
+    if (result.code === 16) {
+      const staleMounts = (await this.mountEntries()).filter(
+        (entry) => mountSourceUrl(entry.source) === url && entry.path !== path,
+      );
+      for (const entry of staleMounts) {
+        log.warn({
+          msg: "unmounting stale WebDAV mount before retrying",
+          data: { stalePath: entry.path, path },
+        });
+        await this.unmount(entry.path);
+      }
+      if (staleMounts.length > 0) {
+        result = await this.mountWebdav(url, path);
+      }
+    }
+
+    if (result.code !== 0) {
+      throw new EnvdError(mountWebdavFailureMessage(result), {
         code: "mount_failed",
-        details: { url, path, stderr },
+        details: { url, path, stderr: result.stderr, exitCode: result.code },
       });
     }
 
@@ -117,7 +128,7 @@ export class DarwinMountAdapter implements MountAdapter {
         "mount_webdav returned success but path is not mounted",
         {
           code: "mount_failed",
-          details: { url, path, stderr },
+          details: { url, path, stderr: result.stderr },
         },
       );
     }
@@ -163,4 +174,38 @@ export class DarwinMountAdapter implements MountAdapter {
 
     log.info({ msg: "unmounted (after retry)", data: { path } });
   }
+
+  private async mountWebdav(url: string, path: string): Promise<RunResult> {
+    // -S suppresses auth UI; -v sets the display name shown in Finder.
+    return this.run("/sbin/mount_webdav", ["-S", "-v", "envd", url, path]);
+  }
+
+  private async mountEntries(): Promise<readonly MountEntry[]> {
+    const { stdout } = await this.run("/sbin/mount", []);
+    return parseMountEntries(stdout);
+  }
+}
+
+function parseMountEntries(stdout: string): readonly MountEntry[] {
+  const entries: MountEntry[] = [];
+  for (const line of stdout.split("\n")) {
+    const match = /^(.+) on (.+?) \(/.exec(line);
+    if (match?.[1] !== undefined && match[2] !== undefined) {
+      entries.push({ source: match[1], path: match[2] });
+    }
+  }
+  return entries;
+}
+
+function mountSourceUrl(source: string): string {
+  return source.startsWith("webdavfs@")
+    ? source.slice("webdavfs@".length)
+    : source;
+}
+
+function mountWebdavFailureMessage(result: RunResult): string {
+  if (result.code === 16) {
+    return "mount_webdav failed: resource busy";
+  }
+  return "mount_webdav failed";
 }

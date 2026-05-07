@@ -133,6 +133,49 @@ describe("mount", () => {
     ).rejects.toMatchObject({ code: "mount_failed" });
   });
 
+  it("unmounts a stale WebDAV mount for the same URL and retries on EBUSY", async () => {
+    const calls: Array<{ cmd: string; args: string[] }> = [];
+    let mountWebdavCalls = 0;
+    let mountCalls = 0;
+    const runner: Runner = (cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === "/sbin/mount_webdav") {
+        mountWebdavCalls++;
+        return Promise.resolve(mountWebdavCalls === 1 ? fail(16) : ok());
+      }
+      if (cmd === "/sbin/mount") {
+        mountCalls++;
+        return Promise.resolve(
+          mountCalls === 1
+            ? ok(
+                "http://127.0.0.1:1911/ on /Users/me/.envd/mount (webdav, ...)\n",
+              )
+            : ok(
+                "http://127.0.0.1:1911/ on /Users/me/.local/state/envd/run/mount (webdav, ...)\n",
+              ),
+        );
+      }
+      return Promise.resolve(ok());
+    };
+
+    const { fn: mkdirFn } = makeMkdir();
+    const adapter = new DarwinMountAdapter(runner, mkdirFn);
+
+    await adapter.mount(
+      "http://127.0.0.1:1911/",
+      "/Users/me/.local/state/envd/run/mount",
+    );
+
+    expect(calls.map((call) => call.cmd)).toEqual([
+      "/sbin/mount_webdav",
+      "/sbin/mount",
+      "/sbin/umount",
+      "/sbin/mount_webdav",
+      "/sbin/mount",
+    ]);
+    expect(calls[2]?.args).toEqual(["/Users/me/.envd/mount"]);
+  });
+
   it("throws EnvdError when mount_webdav succeeds but path is not mounted", async () => {
     // mount_webdav returns 0 but isMounted check returns false (empty mount list)
     const runner: Runner = (cmd) => {
