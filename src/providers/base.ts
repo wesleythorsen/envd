@@ -16,6 +16,7 @@ export type JSONSchema =
 
 export interface Provider {
   readonly name: string;
+  readonly environmentMode: "native" | "config-adapter" | "single";
   readonly instanceConfigSchema: JSONSchema;
   readonly credentialKeys: readonly string[];
   create(ctx: ProviderContext, config: unknown): Promise<ProviderInstance>;

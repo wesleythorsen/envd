@@ -10,7 +10,11 @@ import { readLogTail } from "../../shared/log-file.js";
 import { createLogger, subscribeLogLines } from "../../shared/logger.js";
 import { safeErrorLogData } from "../../shared/log-safety.js";
 import { EnvdError, type ErrorCode } from "../../shared/errors.js";
-import type { Project, ProjectRepo } from "../../core/project.js";
+import type {
+  Project,
+  ProjectEnvironment,
+  ProjectRepo,
+} from "../../core/project.js";
 import { createCache, type Cache, type CacheResult } from "../../core/cache.js";
 import type { StagedDesiredMap, StagingRepo } from "../../core/staging.js";
 import {
@@ -545,15 +549,16 @@ function resolveProjectEnvironment(
   projects: ProjectRepo,
   project: Project,
   requested: string | undefined,
-): string {
+): ProjectEnvironment {
   const environment = requested ?? project.activeEnvironment;
-  if (projects.getEnvironment(project.id, environment) === undefined) {
+  const projectEnvironment = projects.getEnvironment(project.id, environment);
+  if (projectEnvironment === undefined) {
     throw new EnvdError("environment does not exist", {
       code: "not_found",
       details: { projectId: project.id, environment },
     });
   }
-  return environment;
+  return projectEnvironment;
 }
 
 function stagedDesiredToSecretMap(desired: StagedDesiredMap): SecretMap {
@@ -570,8 +575,23 @@ function scopedProjectKey(projectId: string, environment: string): string {
   return `${projectId}\0${environment}`;
 }
 
+function environmentConfig(config: unknown, environment: string): unknown {
+  if (!isRecord(config) || !isRecord(config["environments"])) {
+    return config;
+  }
+
+  const environmentConfigValue = config["environments"][environment];
+  if (environmentConfigValue !== undefined) {
+    return environmentConfigValue;
+  }
+
+  const defaultConfigValue = config["environments"]["default"];
+  return defaultConfigValue === undefined ? config : defaultConfigValue;
+}
+
 async function fetchProjectSecrets(
   projectId: string,
+  providerEnvironment: string,
   providerInstanceId: string | null,
   providerInstanceRepo: ProviderInstanceRepo | undefined,
   keychain: KeychainAdapter | undefined,
@@ -604,7 +624,7 @@ async function fetchProjectSecrets(
   try {
     const instance: ProviderInstance = await provider.create(
       providerContext(keychainAdapter, record.id, provider.name),
-      parseStoredConfig(record),
+      environmentConfig(parseStoredConfig(record), providerEnvironment),
     );
     try {
       return await instance.fetch();
@@ -649,6 +669,7 @@ function readCacheTtlMs(config: unknown): number {
 async function readProjectSecrets(
   projectId: string,
   environment: string,
+  providerEnvironment: string,
   providerInstanceId: string | null,
   providerInstanceRepo: ProviderInstanceRepo | undefined,
   keychain: KeychainAdapter | undefined,
@@ -670,12 +691,15 @@ async function readProjectSecrets(
     });
   }
 
-  const ttlMs = readCacheTtlMs(parseStoredConfig(record));
+  const ttlMs = readCacheTtlMs(
+    environmentConfig(parseStoredConfig(record), providerEnvironment),
+  );
   return await cache.get(
     scopedProjectKey(projectId, environment),
     () =>
       fetchProjectSecrets(
         projectId,
+        providerEnvironment,
         providerInstanceId,
         providerInstanceRepo,
         keychain,
@@ -687,6 +711,7 @@ async function readProjectSecrets(
 async function refreshProjectSecrets(
   projectId: string,
   environment: string,
+  providerEnvironment: string,
   providerInstanceId: string | null,
   providerInstanceRepo: ProviderInstanceRepo | undefined,
   keychain: KeychainAdapter | undefined,
@@ -708,7 +733,9 @@ async function refreshProjectSecrets(
     });
   }
 
-  const ttlMs = readCacheTtlMs(parseStoredConfig(record));
+  const ttlMs = readCacheTtlMs(
+    environmentConfig(parseStoredConfig(record), providerEnvironment),
+  );
   const cacheKey = scopedProjectKey(projectId, environment);
   cache.invalidate(cacheKey);
   return await cache.get(
@@ -716,6 +743,7 @@ async function refreshProjectSecrets(
     () =>
       fetchProjectSecrets(
         projectId,
+        providerEnvironment,
         providerInstanceId,
         providerInstanceRepo,
         keychain,
@@ -727,6 +755,7 @@ async function refreshProjectSecrets(
 async function readBaselineProjectSecrets(
   projectId: string,
   environment: string,
+  providerEnvironment: string,
   providerInstanceId: string | null,
   providerInstanceRepo: ProviderInstanceRepo | undefined,
   keychain: KeychainAdapter | undefined,
@@ -737,6 +766,7 @@ async function readBaselineProjectSecrets(
     () =>
       fetchProjectSecrets(
         projectId,
+        providerEnvironment,
         providerInstanceId,
         providerInstanceRepo,
         keychain,
@@ -763,11 +793,12 @@ async function handleGetProjectDiff(
   }
 
   const includeValues = requestIncludesValues(req);
-  const environment = resolveProjectEnvironment(
+  const projectEnvironment = resolveProjectEnvironment(
     projects,
     project,
     requestEnvironment(req),
   );
+  const environment = projectEnvironment.name;
   const desired = staging.getDesired(id, environment);
   if (desired === undefined) {
     writeJson(
@@ -782,6 +813,7 @@ async function handleGetProjectDiff(
 
   const remote = await fetchProjectSecrets(
     id,
+    projectEnvironment.providerEnvironment,
     project.providerInstanceId,
     providerInstanceRepo,
     keychain,
@@ -827,6 +859,11 @@ async function handleGetProjectStatus(
     return;
   }
 
+  const projectEnvironment = resolveProjectEnvironment(
+    projects,
+    project,
+    undefined,
+  );
   const desired = staging.getDesired(id, project.activeEnvironment);
   const cacheKey = scopedProjectKey(id, project.activeEnvironment);
   const cached = cache.peek(cacheKey);
@@ -850,6 +887,7 @@ async function handleGetProjectStatus(
         const snapshot = await readProjectSecrets(
           id,
           project.activeEnvironment,
+          projectEnvironment.providerEnvironment,
           project.providerInstanceId,
           providerInstanceRepo,
           keychain,
@@ -1033,6 +1071,7 @@ function isEmptyChangeSet(changes: ChangeSet): boolean {
 
 async function pushProjectChanges(
   projectId: string,
+  providerEnvironment: string,
   providerInstanceId: string | null,
   providerInstanceRepo: ProviderInstanceRepo | undefined,
   keychain: KeychainAdapter | undefined,
@@ -1066,7 +1105,7 @@ async function pushProjectChanges(
   try {
     const instance: ProviderInstance = await provider.create(
       providerContext(keychainAdapter, record.id, provider.name),
-      parseStoredConfig(record),
+      environmentConfig(parseStoredConfig(record), providerEnvironment),
     );
     try {
       return await instance.push(changes);
@@ -1105,11 +1144,12 @@ async function handlePullProject(
   }
 
   const input = parseProjectPullBody(await readJsonBody(req));
-  const environment = resolveProjectEnvironment(
+  const projectEnvironment = resolveProjectEnvironment(
     projects,
     project,
     input.environment,
   );
+  const environment = projectEnvironment.name;
   const desired = staging.getDesired(id, environment);
   if (desired !== undefined && !input.force) {
     writeJsonError(
@@ -1126,6 +1166,7 @@ async function handlePullProject(
   const snapshot = await refreshProjectSecrets(
     id,
     environment,
+    projectEnvironment.providerEnvironment,
     project.providerInstanceId,
     providerInstanceRepo,
     keychain,
@@ -1153,16 +1194,18 @@ async function handleCommitProject(
   }
 
   const input = parseProjectCommitBody(await readJsonBody(req));
-  const environment = resolveProjectEnvironment(
+  const projectEnvironment = resolveProjectEnvironment(
     projects,
     project,
     input.environment,
   );
+  const environment = projectEnvironment.name;
   const stagedDesired = staging.getDesired(id, environment);
   if (stagedDesired === undefined) {
     await refreshProjectSecrets(
       id,
       environment,
+      projectEnvironment.providerEnvironment,
       project.providerInstanceId,
       providerInstanceRepo,
       keychain,
@@ -1179,6 +1222,7 @@ async function handleCommitProject(
   const baseline = await readBaselineProjectSecrets(
     id,
     environment,
+    projectEnvironment.providerEnvironment,
     project.providerInstanceId,
     providerInstanceRepo,
     keychain,
@@ -1187,6 +1231,7 @@ async function handleCommitProject(
   const fresh = await refreshProjectSecrets(
     id,
     environment,
+    projectEnvironment.providerEnvironment,
     project.providerInstanceId,
     providerInstanceRepo,
     keychain,
@@ -1223,6 +1268,7 @@ async function handleCommitProject(
 
   const result = await pushProjectChanges(
     id,
+    projectEnvironment.providerEnvironment,
     project.providerInstanceId,
     providerInstanceRepo,
     keychain,
@@ -1266,6 +1312,7 @@ function handleListProviders(res: ServerResponse): void {
   writeJson(res, 200, {
     providers: providers.map((provider) => ({
       name: provider.name,
+      environmentMode: provider.environmentMode,
       instanceConfigSchema: provider.instanceConfigSchema,
       credentialKeys: provider.credentialKeys,
     })),

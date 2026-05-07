@@ -238,8 +238,16 @@ describe("provider APIs happy path", () => {
         ?.credentialKeys,
     ).toEqual([]);
     expect(
+      providers.find((provider) => provider.name === "local-file")
+        ?.environmentMode,
+    ).toBe("config-adapter");
+    expect(
       providers.find((provider) => provider.name === "doppler")?.credentialKeys,
     ).toEqual(["apiToken"]);
+    expect(
+      providers.find((provider) => provider.name === "doppler")
+        ?.environmentMode,
+    ).toBe("config-adapter");
     expect(
       providers.find((provider) => provider.name === "bitwarden-secret-manager")
         ?.credentialKeys,

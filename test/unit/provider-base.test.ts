@@ -12,6 +12,7 @@ describe("provider base contracts", () => {
     const remote: Record<string, string> = { FOO: "bar" };
     const provider: Provider = {
       name: "fake",
+      environmentMode: "config-adapter",
       instanceConfigSchema: {
         type: "object",
         properties: { path: { type: "string" } },

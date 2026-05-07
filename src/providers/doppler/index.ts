@@ -424,6 +424,7 @@ function instance(
 
 const dopplerProvider: Provider = {
   name: PROVIDER_NAME,
+  environmentMode: "config-adapter",
   instanceConfigSchema: {
     type: "object",
     properties: {

@@ -416,14 +416,22 @@ describe("GET /v1/projects/:id/diff", () => {
   let tempDir: string;
   let projectId: string;
   let cleanProjectId: string;
+  let environmentAdapterProjectId: string;
 
   beforeAll(async () => {
     tempDir = mkdtempSync(join(tmpdir(), "envd-control-diff-"));
     const providerFile = join(tempDir, "secrets.json");
+    const environmentDefaultFile = join(tempDir, "env-default.json");
+    const environmentStageFile = join(tempDir, "env-stage.json");
     const projectPath = join(tempDir, "project");
     const cleanProjectPath = join(tempDir, "clean-project");
+    const environmentAdapterProjectPath = join(
+      tempDir,
+      "environment-adapter-project",
+    );
     mkdirSync(projectPath);
     mkdirSync(cleanProjectPath);
+    mkdirSync(environmentAdapterProjectPath);
     writeFileSync(
       providerFile,
       JSON.stringify({
@@ -431,6 +439,16 @@ describe("GET /v1/projects/:id/diff", () => {
         KEPT: "same",
         MODIFIED: "old",
       }),
+      "utf-8",
+    );
+    writeFileSync(
+      environmentDefaultFile,
+      JSON.stringify({ SHARED: "default-remote" }),
+      "utf-8",
+    );
+    writeFileSync(
+      environmentStageFile,
+      JSON.stringify({ SHARED: "stage-remote" }),
       "utf-8",
     );
 
@@ -443,6 +461,16 @@ describe("GET /v1/projects/:id/diff", () => {
       name: "Diff fixture",
       config: JSON.stringify({ path: providerFile }),
     });
+    const environmentProviderInstance = providerInstanceRepo.create({
+      provider: "local-file",
+      name: "Environment adapter fixture",
+      config: JSON.stringify({
+        environments: {
+          default: { path: environmentDefaultFile },
+          "provider-stage": { path: environmentStageFile },
+        },
+      }),
+    });
     const project = projectRepo.create({
       path: projectPath,
       providerInstanceId: providerInstance.id,
@@ -452,14 +480,29 @@ describe("GET /v1/projects/:id/diff", () => {
       path: cleanProjectPath,
       providerInstanceId: providerInstance.id,
     });
+    const environmentAdapterProject = projectRepo.create({
+      path: environmentAdapterProjectPath,
+      providerInstanceId: environmentProviderInstance.id,
+    });
+    projectRepo.createEnvironment(
+      environmentAdapterProject.id,
+      "stage",
+      "provider-stage",
+    );
     stagingRepo.setDesired(project.id, {
       ADDED: "fresh",
       KEPT: "same",
       MODIFIED: "new",
     });
     stagingRepo.setDesired(project.id, { STAGE_ONLY: "stage" }, "stage");
+    stagingRepo.setDesired(
+      environmentAdapterProject.id,
+      { SHARED: "stage-local" },
+      "stage",
+    );
     projectId = project.id;
     cleanProjectId = cleanProject.id;
+    environmentAdapterProjectId = environmentAdapterProject.id;
 
     diffServer = await startControlServer({
       port: 0,
@@ -551,6 +594,27 @@ describe("GET /v1/projects/:id/diff", () => {
         added: { STAGE_ONLY: "stage" },
         modified: {},
         deleted: { DELETED: "gone", KEPT: "same", MODIFIED: "old" },
+      },
+    });
+  });
+
+  it("adapts provider config per requested environment", async () => {
+    const res = await request(
+      `${diffBase}/v1/projects/${environmentAdapterProjectId}/diff?environment=stage&values=true`,
+      {
+        headers: { Authorization: `Bearer ${diffToken}` },
+      },
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(await res.body.json()).toEqual({
+      keys: { added: [], modified: ["SHARED"], deleted: [] },
+      values: {
+        added: {},
+        modified: {
+          SHARED: { before: "stage-remote", after: "stage-local" },
+        },
+        deleted: {},
       },
     });
   });
@@ -750,6 +814,7 @@ describe("POST /v1/projects/:id/commit", () => {
 
   const commitProvider: Provider = {
     name: commitProviderName,
+    environmentMode: "config-adapter",
     instanceConfigSchema: { type: "object" },
     credentialKeys: [],
     create(ctx: ProviderContext, config: unknown) {

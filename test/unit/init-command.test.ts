@@ -26,6 +26,7 @@ import { readEnvdConfig } from "../../src/cli/config-file.js";
 
 const localFileMetadata: ProviderMetadata = {
   name: "local-file",
+  environmentMode: "config-adapter",
   instanceConfigSchema: {
     type: "object",
     properties: {

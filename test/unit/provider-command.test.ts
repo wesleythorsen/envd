@@ -16,6 +16,7 @@ import { EnvdError } from "../../src/shared/errors.js";
 
 const localFileMetadata: ProviderMetadata = {
   name: "local-file",
+  environmentMode: "config-adapter",
   instanceConfigSchema: {
     type: "object",
     properties: {
@@ -156,6 +157,7 @@ describe("provider command helpers", () => {
   it("prompts config from string, boolean, and enum schema fields, then prompts credentials separately", async () => {
     const metadata: ProviderMetadata = {
       name: "test-provider",
+      environmentMode: "config-adapter",
       instanceConfigSchema: {
         type: "object",
         properties: {

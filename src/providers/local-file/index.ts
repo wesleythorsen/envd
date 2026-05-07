@@ -169,6 +169,7 @@ function instance(
 
 const localFileProvider: Provider = {
   name: "local-file",
+  environmentMode: "config-adapter",
   instanceConfigSchema: {
     type: "object",
     properties: {

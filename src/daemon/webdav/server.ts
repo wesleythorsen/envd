@@ -115,6 +115,20 @@ function parseProviderConfig(record: ProviderInstanceRecord): unknown {
   return parseJson(record.config, "provider instance config");
 }
 
+function environmentConfig(config: unknown, environment: string): unknown {
+  if (!isRecord(config) || !isRecord(config["environments"])) {
+    return config;
+  }
+
+  const environmentConfigValue = config["environments"][environment];
+  if (environmentConfigValue !== undefined) {
+    return environmentConfigValue;
+  }
+
+  const defaultConfigValue = config["environments"]["default"];
+  return defaultConfigValue === undefined ? config : defaultConfigValue;
+}
+
 function readCacheTtlMs(config: unknown): number {
   if (!isRecord(config)) {
     return DEFAULT_CACHE_TTL_MS;
@@ -211,7 +225,18 @@ async function readProviderSnapshot(
       throw new Error("provider is not registered");
     }
 
-    const config = parseProviderConfig(record);
+    const projectEnvironment = runtime.projectRepo.getEnvironment(
+      project.id,
+      project.activeEnvironment,
+    );
+    if (projectEnvironment === undefined) {
+      throw new Error("project environment not found");
+    }
+
+    const config = environmentConfig(
+      parseProviderConfig(record),
+      projectEnvironment.providerEnvironment,
+    );
     const ttlMs = readCacheTtlMs(config);
     return await runtime.cache.get(
       scopedProjectKey(project),

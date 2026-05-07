@@ -455,6 +455,7 @@ async function pushSecrets(
 
 const awsSecretsManagerProvider: Provider = {
   name: PROVIDER_NAME,
+  environmentMode: "config-adapter",
   instanceConfigSchema: {
     type: "object",
     properties: {

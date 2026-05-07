@@ -416,6 +416,7 @@ async function testAuth(
 
 const bitwardenSecretManagerProvider: Provider = {
   name: PROVIDER_NAME,
+  environmentMode: "config-adapter",
   instanceConfigSchema: {
     type: "object",
     properties: {

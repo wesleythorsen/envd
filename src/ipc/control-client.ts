@@ -145,6 +145,7 @@ export interface ProjectPullResult {
 
 export interface ProviderMetadata {
   readonly name: string;
+  readonly environmentMode: "native" | "config-adapter" | "single";
   readonly instanceConfigSchema: JSONSchema;
   readonly credentialKeys: readonly string[];
 }
