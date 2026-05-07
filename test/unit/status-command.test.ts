@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getStatus } from "../../src/cli/commands/status.js";
+import { formatStatusHuman, getStatus } from "../../src/cli/commands/status.js";
 import type {
   ControlClient,
   ProjectDetail,
@@ -122,6 +122,8 @@ describe("getStatus", () => {
 
       expect(status.daemon).toEqual({
         running: true,
+        pid: null,
+        ports: null,
         version: "test",
         uptimeSec: 12,
         error: null,
@@ -315,6 +317,66 @@ describe("getStatus", () => {
 
       expect(status.project?.linkState).toBe("missing");
       expect(status.project?.nextAction).toBe("run envd link");
+    });
+  });
+
+  it("formats workflow-centered default human output", async () => {
+    await withTempDir(async (dir) => {
+      const envTarget = "/tmp/envd-mount/p/project-1.token-1/.env";
+      writeFileSync(
+        join(dir, ".envd.json"),
+        JSON.stringify({ projectId: "project-1", version: 1 }),
+      );
+      symlinkSync(envTarget, join(dir, ".env"));
+
+      const status = await getStatus({
+        projectPath: dir,
+        client: new FakeControlClient(
+          {
+            id: "project-1",
+            token: "token-1",
+            path: dir,
+            providerInstanceId: "provider-1",
+            activeEnvironment: "default",
+            format: "dotenv",
+            formatConfig: "{}",
+            createdAt: 1,
+            updatedAt: 1,
+            mountPath: envTarget,
+          },
+          {
+            providerInstanceId: "provider-1",
+            provider: "local-file",
+            providerInstanceName: "Local secrets",
+            providerHealthy: true,
+            providerError: null,
+            lastFetchTime: null,
+            staging: { added: 0, modified: 0, deleted: 0, total: 0 },
+          },
+        ),
+        mountAdapter: new FakeMountAdapter(true),
+      });
+
+      expect(formatStatusHuman(status)).toContain(
+        "  active environment: default",
+      );
+      expect(formatStatusHuman(status)).not.toContain("daemon: running");
+    });
+  });
+
+  it("formats full human diagnostics", async () => {
+    await withTempDir(async (dir) => {
+      const status = await getStatus({
+        projectPath: dir,
+        client: new FakeControlClient(),
+        mountAdapter: new FakeMountAdapter(true),
+      });
+
+      const output = formatStatusHuman(status, true);
+      expect(output).toContain("daemon: running");
+      expect(output).toContain("  pid: N/A");
+      expect(output).toContain("mount: mounted");
+      expect(output).toContain("project: not initialized");
     });
   });
 

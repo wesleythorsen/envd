@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { lstatSync, readlinkSync } from "node:fs";
+import { lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 import type {
   ControlClient,
@@ -11,7 +11,7 @@ import { EnvdError } from "../../shared/errors.js";
 import { writeCliError } from "../error-output.js";
 import { ensureCliPreflight } from "../preflight.js";
 import { createMountAdapter } from "../../mount/index.js";
-import { mountPath } from "../../shared/paths.js";
+import { mountPath, pidFile, portsFile } from "../../shared/paths.js";
 import type { MountAdapter } from "../../mount/adapter.js";
 import { ENV_FILE } from "../project-files.js";
 import {
@@ -22,6 +22,7 @@ import {
 
 interface StatusOptions {
   readonly json?: boolean;
+  readonly full?: boolean;
   readonly noAutostart?: boolean;
 }
 
@@ -36,6 +37,11 @@ interface StatusDeps {
 export interface StatusResult {
   readonly daemon: {
     readonly running: boolean;
+    readonly pid: number | null;
+    readonly ports: {
+      readonly control: number;
+      readonly webdav: number;
+    } | null;
     readonly version: string | null;
     readonly uptimeSec: number | null;
     readonly error: string | null;
@@ -103,15 +109,53 @@ function resolveClient(deps: StatusDeps): ControlClient | null {
   }
 }
 
+function readPid(): number | null {
+  try {
+    const value = Number.parseInt(readFileSync(pidFile(), "utf-8"), 10);
+    return Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function readPorts(): {
+  readonly control: number;
+  readonly webdav: number;
+} | null {
+  try {
+    const parsed = JSON.parse(readFileSync(portsFile(), "utf-8")) as Record<
+      string,
+      unknown
+    >;
+    const control = parsed["control"];
+    const webdav = parsed["webdav"];
+    if (typeof control !== "number" || typeof webdav !== "number") {
+      return null;
+    }
+    return { control, webdav };
+  } catch {
+    return null;
+  }
+}
+
 async function daemonStatus(client: ControlClient | null): Promise<{
   running: boolean;
+  pid: number | null;
+  ports: {
+    readonly control: number;
+    readonly webdav: number;
+  } | null;
   version: string | null;
   uptimeSec: number | null;
   error: string | null;
 }> {
+  const pid = readPid();
+  const ports = readPorts();
   if (client === null) {
     return {
       running: false,
+      pid,
+      ports,
       version: null,
       uptimeSec: null,
       error: "daemon unreachable",
@@ -122,6 +166,8 @@ async function daemonStatus(client: ControlClient | null): Promise<{
     const health = await client.health();
     return {
       running: health.ok,
+      pid,
+      ports,
       version: health.version,
       uptimeSec: health.uptimeSec,
       error: null,
@@ -129,6 +175,8 @@ async function daemonStatus(client: ControlClient | null): Promise<{
   } catch (err: unknown) {
     return {
       running: false,
+      pid,
+      ports,
       version: null,
       uptimeSec: null,
       error: err instanceof Error ? err.message : String(err),
@@ -255,27 +303,58 @@ export async function getStatus(deps: StatusDeps = {}): Promise<StatusResult> {
   return { daemon, mount, project };
 }
 
-function printHuman(status: StatusResult): void {
-  if (status.project === null) {
-    process.stdout.write("project: not initialized\n");
-    process.stdout.write("next: run envd init\n");
-    if (!status.daemon.running) {
-      process.stdout.write(`daemon: ${status.daemon.error ?? "not running"}\n`);
+export function formatStatusHuman(status: StatusResult, full = false): string {
+  const lines: string[] = [];
+  if (full) {
+    lines.push(`daemon: ${status.daemon.running ? "running" : "not running"}`);
+    lines.push(`  pid: ${status.daemon.pid ?? "N/A"}`);
+    lines.push(`  version: ${status.daemon.version ?? "N/A"}`);
+    lines.push(`  uptime: ${status.daemon.uptimeSec ?? "N/A"}s`);
+    lines.push(
+      `  ports: ${
+        status.daemon.ports === null
+          ? "N/A"
+          : `control=${status.daemon.ports.control}, webdav=${status.daemon.ports.webdav}`
+      }`,
+    );
+    if (status.daemon.error !== null) {
+      lines.push(`  error: ${status.daemon.error}`);
     }
-    if (!status.mount.mounted) {
-      process.stdout.write(`mount: ${status.mount.error ?? "not mounted"}\n`);
+    lines.push(`mount: ${status.mount.mounted ? "mounted" : "not mounted"}`);
+    lines.push(`  path: ${status.mount.path ?? "N/A"}`);
+    if (status.mount.error !== null) {
+      lines.push(`  error: ${status.mount.error}`);
     }
-    return;
   }
 
-  process.stdout.write("project: initialized\n");
-  process.stdout.write(`  id: ${status.project.projectId}\n`);
-  process.stdout.write(
-    `  active environment: ${status.project.activeEnvironment}\n`,
-  );
+  if (status.project === null) {
+    lines.push("project: not initialized");
+    lines.push("next: run envd init");
+    if (!status.daemon.running) {
+      lines.push(`daemon: ${status.daemon.error ?? "not running"}`);
+    }
+    if (!status.mount.mounted) {
+      lines.push(`mount: ${status.mount.error ?? "not mounted"}`);
+    }
+    return `${lines.join("\n")}\n`;
+  }
+
+  lines.push("project: initialized");
+  lines.push(`  id: ${status.project.projectId}`);
+  if (full) {
+    lines.push(`  path: ${status.project.path}`);
+    lines.push(`  registered: ${status.project.registered ? "yes" : "no"}`);
+    lines.push(`  format: ${status.project.format ?? "N/A"}`);
+    lines.push(`  mount path: ${status.project.mountPath ?? "N/A"}`);
+    lines.push(`  env path: ${status.project.envPath}`);
+    lines.push(
+      `  symlink target: ${status.project.symlinkTarget ?? "missing"}`,
+    );
+  }
+  lines.push(`  active environment: ${status.project.activeEnvironment}`);
   if (status.project.provider === null) {
-    process.stdout.write("  provider: N/A\n");
-    process.stdout.write("  provider health: N/A\n");
+    lines.push("  provider: N/A");
+    lines.push("  provider health: N/A");
   } else {
     const providerLabel =
       status.project.provider.provider === null
@@ -283,42 +362,49 @@ function printHuman(status: StatusResult): void {
         : status.project.provider.name === null
           ? status.project.provider.provider
           : `${status.project.provider.provider} (${status.project.provider.name})`;
-    process.stdout.write(`  provider: ${providerLabel}\n`);
-    if (status.project.provider.healthy === true) {
-      process.stdout.write("  provider health: ok\n");
-    } else if (status.project.provider.error !== null) {
-      process.stdout.write(
-        `  provider health: error (${status.project.provider.error})\n`,
+    lines.push(`  provider: ${providerLabel}`);
+    if (full) {
+      lines.push(
+        `  provider instance: ${status.project.provider.instanceId ?? "N/A"}`,
       );
+    }
+    if (status.project.provider.healthy === true) {
+      lines.push("  provider health: ok");
+    } else if (status.project.provider.error !== null) {
+      lines.push(`  provider health: error (${status.project.provider.error})`);
     } else {
-      process.stdout.write("  provider health: N/A\n");
+      lines.push("  provider health: N/A");
     }
   }
   if (status.project.staging === null) {
-    process.stdout.write("  staged: unavailable\n");
+    lines.push("  staged: unavailable");
   } else {
-    process.stdout.write(
-      `  staged: +${status.project.staging.added} ~${status.project.staging.modified} -${status.project.staging.deleted}\n`,
+    lines.push(
+      `  staged: +${status.project.staging.added} ~${status.project.staging.modified} -${status.project.staging.deleted}`,
     );
   }
-  process.stdout.write(`  .env: ${status.project.linkState}\n`);
-  process.stdout.write(
-    `  last fetch: ${status.project.lastFetchTime ?? "N/A"}\n`,
-  );
-  process.stdout.write(`next: ${status.project.nextAction}\n`);
+  lines.push(`  .env: ${status.project.linkState}`);
+  lines.push(`  last fetch: ${status.project.lastFetchTime ?? "N/A"}`);
+  lines.push(`next: ${status.project.nextAction}`);
 
   if (!status.daemon.running) {
-    process.stdout.write(`daemon: ${status.daemon.error ?? "not running"}\n`);
+    lines.push(`daemon: ${status.daemon.error ?? "not running"}`);
   }
   if (!status.mount.mounted) {
-    process.stdout.write(`mount: ${status.mount.error ?? "not mounted"}\n`);
+    lines.push(`mount: ${status.mount.error ?? "not mounted"}`);
   }
+  return `${lines.join("\n")}\n`;
+}
+
+function printHuman(status: StatusResult, full: boolean): void {
+  process.stdout.write(formatStatusHuman(status, full));
 }
 
 export function buildStatusCommand(): Command {
   return new Command("status")
     .description("Show envd status")
     .option("--json", "JSON output")
+    .option("--full", "include daemon, mount, and registration diagnostics")
     .option("--no-autostart", "fail instead of starting daemon support")
     .action(async (opts: StatusOptions) => {
       try {
@@ -330,7 +416,7 @@ export function buildStatusCommand(): Command {
         if (opts.json === true) {
           process.stdout.write(JSON.stringify(status) + "\n");
         } else {
-          printHuman(status);
+          printHuman(status, opts.full === true);
         }
       } catch (err: unknown) {
         writeCliError(err);
