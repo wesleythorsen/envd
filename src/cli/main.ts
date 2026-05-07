@@ -12,6 +12,7 @@ import { buildProjectCommand } from "./commands/project.js";
 import { buildPullCommand } from "./commands/pull.js";
 import { buildStatusCommand } from "./commands/status.js";
 import { buildUnlinkCommand } from "./commands/unlink.js";
+import { buildUseCommand } from "./commands/use.js";
 
 // createRequire is the stable way to load JSON in ESM without import assertions
 const require = createRequire(import.meta.url);
@@ -42,5 +43,6 @@ program.addCommand(buildProjectCommand());
 program.addCommand(buildPullCommand());
 program.addCommand(buildStatusCommand());
 program.addCommand(buildUnlinkCommand());
+program.addCommand(buildUseCommand());
 
 program.parse();
