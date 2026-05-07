@@ -635,12 +635,11 @@ describe("initProject", () => {
     });
   });
 
-  it("creates a provider instance through provider-add prompts when none exist", async () => {
+  it("creates a default personal local provider instance when none exist", async () => {
     await withTempProject(async (projectDir) => {
       const client = new FakeControlClient(
         "/Volumes/envd/p/project-1.token-1/.env",
       );
-      const answers = ["", "/tmp/secrets.json"];
 
       await initProject(
         projectDir,
@@ -648,16 +647,18 @@ describe("initProject", () => {
         {
           client,
           ensureMount: false,
-          prompt: () => Promise.resolve(answers.shift() ?? ""),
+          prompt: () => Promise.reject(new Error("unexpected prompt")),
         },
       );
 
-      expect(client.lastCreateProviderInstanceInput).toEqual({
+      expect(client.lastCreateProviderInstanceInput).toMatchObject({
         provider: "local-file",
-        name: "local-file",
-        config: { path: "/tmp/secrets.json" },
+        name: "personal",
         credentials: {},
       });
+      const config = client.lastCreateProviderInstanceInput?.config;
+      expect(typeof config?.["path"]).toBe("string");
+      expect(config?.["path"]).toMatch(/providers\/personal\.json$/);
       expect(client.lastCreateProjectInput).toEqual({
         path: projectDir,
         providerInstanceId: "instance-1",

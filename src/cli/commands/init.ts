@@ -24,6 +24,7 @@ import { writeCliError } from "../error-output.js";
 import { ensureCliPreflight } from "../preflight.js";
 import { createMountAdapter } from "../../mount/index.js";
 import { mountPath, portsFile } from "../../shared/paths.js";
+import { stateDir } from "../../shared/paths.js";
 import type { MountAdapter } from "../../mount/adapter.js";
 import { addProviderInstance, type ProviderCommandDeps } from "./provider.js";
 import {
@@ -872,6 +873,18 @@ function newProviderTarget(
     : { kind: "new", provider, name };
 }
 
+function defaultPersonalProviderPath(): string {
+  return join(stateDir(), "providers", "personal.json");
+}
+
+function isDefaultPersonalLocalTarget(target: InitProviderTarget): boolean {
+  return (
+    target.kind === "new" &&
+    target.provider === "local-file" &&
+    target.name === "personal"
+  );
+}
+
 async function providerInstanceTargetByName(
   options: InitOptions,
   deps: InitProjectDeps,
@@ -953,13 +966,7 @@ async function selectProviderTarget(
 
   const instances = await deps.client.listProviderInstances();
   if (instances.length === 0) {
-    return newProviderTarget(
-      await promptProviderName(
-        await deps.client.listProviders(),
-        deps.prompt ?? defaultPrompt,
-      ),
-      options.providerName ?? options.providerInstanceName,
-    );
+    return newProviderTarget("local-file", "personal");
   }
 
   const choice = await promptProviderInstanceChoice(
@@ -995,6 +1002,21 @@ async function materializeProviderTarget(
     throw new EnvdError("provider target is missing a provider type", {
       code: "internal",
     });
+  }
+  if (
+    isDefaultPersonalLocalTarget(target) &&
+    options.configJson === undefined &&
+    options.credentialsJson === undefined
+  ) {
+    const path = defaultPersonalProviderPath();
+    mkdirSync(dirname(path), { recursive: true });
+    const created = await deps.client.createProviderInstance({
+      provider: "local-file",
+      name: "personal",
+      config: { path },
+      credentials: {},
+    });
+    return created.id;
   }
   return createProviderInstanceForInit(options, deps, target.provider);
 }
