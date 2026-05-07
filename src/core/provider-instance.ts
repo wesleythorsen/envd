@@ -115,6 +115,19 @@ export class ProviderInstanceRepo {
     return row === undefined ? undefined : rowToProviderInstance(row);
   }
 
+  getByNameOrId(value: string): ProviderInstanceRecord | undefined {
+    const row = this.db
+      .prepare<[string, string], ProviderInstanceRow>(
+        `
+        SELECT id, provider, name, config, created_at
+        FROM provider_instances
+        WHERE id = ? OR name = ?
+      `,
+      )
+      .get(value, value);
+    return row === undefined ? undefined : rowToProviderInstance(row);
+  }
+
   list(): readonly ProviderInstanceRecord[] {
     return this.db
       .prepare<[], ProviderInstanceRow>(

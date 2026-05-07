@@ -1033,6 +1033,34 @@ function parseProjectImportBody(body: unknown): ParsedProjectImportBody {
   };
 }
 
+interface ParsedProjectProviderMoveBody {
+  readonly provider: string;
+  readonly purge: boolean;
+}
+
+function parseProjectProviderMoveBody(
+  body: unknown,
+): ParsedProjectProviderMoveBody {
+  if (!isRecord(body)) {
+    throw new EnvdError("request body must be a JSON object", {
+      code: "usage_error",
+    });
+  }
+  const provider = body["provider"];
+  if (typeof provider !== "string" || provider.trim() === "") {
+    throw new EnvdError("provider must be a non-empty string", {
+      code: "usage_error",
+    });
+  }
+  const purge = body["purge"];
+  if (purge !== undefined && typeof purge !== "boolean") {
+    throw new EnvdError("purge must be a boolean", {
+      code: "usage_error",
+    });
+  }
+  return { provider, purge: purge === true };
+}
+
 function secretValue(map: SecretMap, key: string): string | null {
   return Object.prototype.hasOwnProperty.call(map, key)
     ? (map[key] ?? null)
@@ -1414,6 +1442,133 @@ async function handleImportProjectEnvironment(
     environment: projectEnvironment.name,
     keyCount: Object.keys(input.values).length,
     verified: true,
+  });
+}
+
+function assertVerifiedSecrets(
+  expected: SecretMap,
+  actual: SecretMap,
+  environment: string,
+): void {
+  for (const [key, value] of Object.entries(expected)) {
+    if (actual[key] !== value) {
+      throw new EnvdError("target provider verification failed", {
+        code: "provider_unreachable",
+        details: { environment, key },
+      });
+    }
+  }
+}
+
+async function handleMoveProjectProvider(
+  req: IncomingMessage,
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+  id: string,
+): Promise<void> {
+  const projects = requireProjectRepo(projectRepo);
+  const providerInstances = requireProviderInstanceRepo(providerInstanceRepo);
+  const project = projects.get(id);
+  if (project === undefined) {
+    writeJsonError(res, 404, "not_found", "Project not found");
+    return;
+  }
+  if (project.providerInstanceId === null) {
+    throw new EnvdError("project has no source provider instance", {
+      code: "usage_error",
+      details: { projectId: id },
+    });
+  }
+
+  const input = parseProjectProviderMoveBody(await readJsonBody(req));
+  const target = providerInstances.getByNameOrId(input.provider);
+  if (target === undefined) {
+    throw new EnvdError("target provider instance was not found", {
+      code: "not_found",
+      details: { provider: input.provider },
+    });
+  }
+
+  const environments = projects.listEnvironments(id);
+  const moved: string[] = [];
+  const snapshots = new Map<string, SecretMap>();
+  for (const environment of environments) {
+    const source = await fetchProjectSecrets(
+      id,
+      environment.providerEnvironment,
+      project.providerInstanceId,
+      providerInstanceRepo,
+      keychain,
+    );
+    snapshots.set(environment.name, source);
+    const targetRemote = await fetchProjectSecrets(
+      id,
+      environment.providerEnvironment,
+      target.id,
+      providerInstanceRepo,
+      keychain,
+    );
+    const result = await pushProjectChanges(
+      id,
+      environment.providerEnvironment,
+      target.id,
+      providerInstanceRepo,
+      keychain,
+      toChangeSet(targetRemote, source),
+    );
+    if (result.status === "conflict") {
+      writeJsonError(
+        res,
+        409,
+        "commit_conflict",
+        "Target provider reported a conflict while moving project",
+        { environment: environment.name, remote: result.remote },
+      );
+      return;
+    }
+    const verified = await fetchProjectSecrets(
+      id,
+      environment.providerEnvironment,
+      target.id,
+      providerInstanceRepo,
+      keychain,
+    );
+    assertVerifiedSecrets(source, verified, environment.name);
+    moved.push(environment.name);
+  }
+
+  if (input.purge) {
+    for (const environment of environments) {
+      const source = snapshots.get(environment.name) ?? {};
+      const purgeResult = await pushProjectChanges(
+        id,
+        environment.providerEnvironment,
+        project.providerInstanceId,
+        providerInstanceRepo,
+        keychain,
+        { upserts: {}, deletes: Object.keys(source).sort() },
+      );
+      if (purgeResult.status === "conflict") {
+        writeJsonError(
+          res,
+          409,
+          "commit_conflict",
+          "Source provider reported a conflict while purging moved project",
+          { environment: environment.name, remote: purgeResult.remote },
+        );
+        return;
+      }
+    }
+  }
+
+  const updated = projects.setProviderInstance(id, target.id);
+  writeJson(res, 200, {
+    projectId: updated.id,
+    providerInstanceId: target.id,
+    movedEnvironments: moved,
+    purged: input.purge,
   });
 }
 
@@ -2183,6 +2338,38 @@ function dispatch(
         stagingRepo,
         keychain,
         cache,
+        projectId,
+      ).catch((err: unknown) => {
+        writeErrorFromUnknown(res, err);
+      });
+      return;
+    }
+
+    writeJsonError(
+      res,
+      405,
+      "method_not_allowed",
+      `Method ${method} not allowed on ${path}`,
+    );
+    return;
+  }
+
+  const projectMoveProviderMatch =
+    /^\/v1\/projects\/([^/]+)\/move-provider$/.exec(path);
+  if (projectMoveProviderMatch !== null) {
+    const projectId = projectMoveProviderMatch[1];
+    if (projectId === undefined) {
+      writeJsonError(res, 404, "not_found", `No route for ${method} ${path}`);
+      return;
+    }
+
+    if (method === "POST") {
+      void handleMoveProjectProvider(
+        req,
+        res,
+        projectRepo,
+        providerInstanceRepo,
+        keychain,
         projectId,
       ).catch((err: unknown) => {
         writeErrorFromUnknown(res, err);

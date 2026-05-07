@@ -8,7 +8,13 @@ import {
   afterEach,
 } from "vitest";
 import { fetch, request } from "undici";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -1101,6 +1107,118 @@ describe("POST /v1/projects/:id/commit", () => {
       VALUE: "base",
     });
     expect(stagingRepo.getDesired(projectId)).toEqual({ VALUE: "local" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /v1/projects/:id/move-provider
+// ---------------------------------------------------------------------------
+
+describe("POST /v1/projects/:id/move-provider", () => {
+  const moveToken = generateToken();
+  let moveServer: ControlServerHandle;
+  let moveBase: string;
+  let state: StateStore;
+  let tempDir: string;
+  let projectRepo: ProjectRepo;
+  let sourceDefaultFile: string;
+  let sourceDevFile: string;
+  let targetDefaultFile: string;
+  let targetDevFile: string;
+  let projectId: string;
+  let targetProviderInstanceId: string;
+
+  beforeAll(async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "envd-control-move-"));
+    const projectPath = join(tempDir, "project");
+    mkdirSync(projectPath);
+    sourceDefaultFile = join(tempDir, "source-default.json");
+    sourceDevFile = join(tempDir, "source-dev.json");
+    targetDefaultFile = join(tempDir, "target-default.json");
+    targetDevFile = join(tempDir, "target-dev.json");
+    writeFileSync(sourceDefaultFile, JSON.stringify({ ROOT: "source" }));
+    writeFileSync(sourceDevFile, JSON.stringify({ DEV: "source-dev" }));
+    writeFileSync(targetDefaultFile, JSON.stringify({ OLD: "target" }));
+    writeFileSync(targetDevFile, JSON.stringify({}));
+
+    state = openState(join(tempDir, "state.db"));
+    projectRepo = new ProjectRepo(state.db);
+    const providerInstanceRepo = new ProviderInstanceRepo(state.db);
+    const source = providerInstanceRepo.create({
+      provider: "local-file",
+      name: "source",
+      config: JSON.stringify({
+        environments: {
+          default: { path: sourceDefaultFile },
+          dev: { path: sourceDevFile },
+        },
+      }),
+    });
+    const target = providerInstanceRepo.create({
+      provider: "local-file",
+      name: "target",
+      config: JSON.stringify({
+        environments: {
+          default: { path: targetDefaultFile },
+          dev: { path: targetDevFile },
+        },
+      }),
+    });
+    targetProviderInstanceId = target.id;
+    const project = projectRepo.create({
+      path: projectPath,
+      providerInstanceId: source.id,
+    });
+    projectRepo.createEnvironment(project.id, "dev");
+    projectId = project.id;
+
+    moveServer = await startControlServer({
+      port: 0,
+      token: moveToken,
+      projectRepo,
+      providerInstanceRepo,
+    });
+    moveBase = `http://127.0.0.1:${moveServer.port}`;
+  });
+
+  afterAll(async () => {
+    await moveServer.close();
+    state.close();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("copies environments to target, verifies them, and retains source by default", async () => {
+    const res = await request(
+      `${moveBase}/v1/projects/${projectId}/move-provider`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${moveToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ provider: "target" }),
+      },
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(await res.body.json()).toEqual({
+      projectId,
+      providerInstanceId: targetProviderInstanceId,
+      movedEnvironments: ["default", "dev"],
+      purged: false,
+    });
+    expect(projectRepo.get(projectId)?.providerInstanceId).toBe(
+      targetProviderInstanceId,
+    );
+    expect(JSON.parse(readFileSync(targetDefaultFile, "utf-8"))).toEqual({
+      ROOT: "source",
+    });
+    expect(JSON.parse(readFileSync(targetDevFile, "utf-8"))).toEqual({
+      DEV: "source-dev",
+    });
+    expect(JSON.parse(readFileSync(sourceDefaultFile, "utf-8"))).toEqual({
+      ROOT: "source",
+    });
   });
 });
 

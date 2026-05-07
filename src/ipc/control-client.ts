@@ -31,6 +31,10 @@ export interface ControlClient {
     id: string,
     input: ProjectEnvironmentImportInput,
   ): Promise<ProjectEnvironmentImportResult>;
+  moveProjectProvider(
+    id: string,
+    input: ProjectProviderMoveInput,
+  ): Promise<ProjectProviderMoveResult>;
   getProjectStatus(id: string): Promise<ProjectStatusDetail>;
   getProjectDiff(
     id: string,
@@ -109,6 +113,18 @@ export interface ProjectEnvironmentImportResult {
   readonly environment: string;
   readonly keyCount: number;
   readonly verified: boolean;
+}
+
+export interface ProjectProviderMoveInput {
+  readonly provider: string;
+  readonly purge?: boolean;
+}
+
+export interface ProjectProviderMoveResult {
+  readonly projectId: string;
+  readonly providerInstanceId: string;
+  readonly movedEnvironments: readonly string[];
+  readonly purged: boolean;
 }
 
 export interface ProjectStatusDetail {
@@ -753,6 +769,16 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
         base,
         token,
         `/v1/projects/${encodeURIComponent(id)}/import`,
+        input,
+        timeoutMs,
+      );
+    },
+
+    async moveProjectProvider(id, input) {
+      return apiPostJson<ProjectProviderMoveResult>(
+        base,
+        token,
+        `/v1/projects/${encodeURIComponent(id)}/move-provider`,
         input,
         timeoutMs,
       );

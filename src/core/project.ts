@@ -310,6 +310,32 @@ export class ProjectRepo {
     return updated;
   }
 
+  setProviderInstance(projectId: string, providerInstanceId: string): Project {
+    if (!providerInstanceExists(this.db, providerInstanceId)) {
+      throw new EnvdError("provider instance does not exist", {
+        code: "usage_error",
+        details: { providerInstanceId },
+      });
+    }
+    this.db
+      .prepare(
+        `
+        UPDATE projects
+        SET provider_instance_id = ?, updated_at = ?
+        WHERE id = ?
+      `,
+      )
+      .run(providerInstanceId, Date.now(), projectId);
+    const updated = this.get(projectId);
+    if (updated === undefined) {
+      throw new EnvdError("project does not exist", {
+        code: "not_found",
+        details: { projectId },
+      });
+    }
+    return updated;
+  }
+
   private createEnvironmentRow(
     projectId: string,
     name: string,
