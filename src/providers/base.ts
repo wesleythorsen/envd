@@ -50,4 +50,6 @@ export interface ProviderContext {
   readonly keychain: KeychainAdapter;
   readonly logger: Logger;
   readonly fetch: typeof globalThis.fetch;
+  readonly projectId?: string;
+  readonly environment?: string;
 }

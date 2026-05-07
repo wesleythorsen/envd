@@ -1147,7 +1147,14 @@ describe("/v1/providers and /v1/provider-instances", () => {
     const providersBody = (await providersRes.body.json()) as {
       providers?: readonly Record<string, unknown>[];
     };
-    expect(providersBody.providers).toHaveLength(4);
+    expect(providersBody.providers).toHaveLength(5);
+    const envd = providersBody.providers?.find(
+      (provider) => provider["name"] === "envd",
+    );
+    if (envd === undefined) {
+      throw new Error("expected envd provider metadata");
+    }
+    expect(envd["environmentMode"]).toBe("native");
     const localFile = providersBody.providers?.find(
       (provider) => provider["name"] === "local-file",
     );

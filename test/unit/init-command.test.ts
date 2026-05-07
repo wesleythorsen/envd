@@ -652,13 +652,13 @@ describe("initProject", () => {
       );
 
       expect(client.lastCreateProviderInstanceInput).toMatchObject({
-        provider: "local-file",
+        provider: "envd",
         name: "personal",
         credentials: {},
       });
       const config = client.lastCreateProviderInstanceInput?.config;
-      expect(typeof config?.["path"]).toBe("string");
-      expect(config?.["path"]).toMatch(/providers\/personal\.json$/);
+      expect(typeof config?.["root"]).toBe("string");
+      expect(config?.["root"]).toMatch(/providers\/personal$/);
       expect(client.lastCreateProjectInput).toEqual({
         path: projectDir,
         providerInstanceId: "instance-1",

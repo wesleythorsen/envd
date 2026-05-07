@@ -248,11 +248,15 @@ describe("provider APIs happy path", () => {
   it("lists providers and creates, tests, gets, lists, and deletes a local-file instance", async () => {
     const providers = await providerClient.listProviders();
     expect(providers.map((provider) => provider.name)).toEqual([
+      "envd",
       "local-file",
       "doppler",
       "bitwarden-secret-manager",
       "aws-secrets-manager",
     ]);
+    expect(
+      providers.find((provider) => provider.name === "envd")?.environmentMode,
+    ).toBe("native");
     expect(
       providers.find((provider) => provider.name === "local-file")
         ?.credentialKeys,

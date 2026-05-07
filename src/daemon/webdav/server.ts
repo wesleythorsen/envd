@@ -169,11 +169,13 @@ function providerContext(
   keychain: KeychainAdapter,
   providerInstanceId: string,
   providerName: string,
+  scope?: { readonly projectId: string; readonly environment: string },
 ): ProviderContext {
   return {
     keychain: scopedKeychain(keychain, providerInstanceId),
     logger: createLogger(`providers/${providerName}`),
     fetch: globalThis.fetch,
+    ...(scope === undefined ? {} : scope),
   };
 }
 
@@ -182,9 +184,10 @@ async function fetchFromProvider(
   keychain: KeychainAdapter,
   record: ProviderInstanceRecord,
   config: unknown,
+  scope: { readonly projectId: string; readonly environment: string },
 ): Promise<SecretMap> {
   const instance: ProviderInstance = await provider.create(
-    providerContext(keychain, record.id, provider.name),
+    providerContext(keychain, record.id, provider.name, scope),
     config,
   );
 
@@ -240,7 +243,11 @@ async function readProviderSnapshot(
     const ttlMs = readCacheTtlMs(config);
     return await runtime.cache.get(
       scopedProjectKey(project),
-      () => fetchFromProvider(provider, keychain, record, config),
+      () =>
+        fetchFromProvider(provider, keychain, record, config, {
+          projectId: project.id,
+          environment: projectEnvironment.providerEnvironment,
+        }),
       { ttlMs },
     );
   } catch (err: unknown) {

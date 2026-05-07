@@ -623,7 +623,10 @@ async function fetchProjectSecrets(
 
   try {
     const instance: ProviderInstance = await provider.create(
-      providerContext(keychainAdapter, record.id, provider.name),
+      providerContext(keychainAdapter, record.id, provider.name, {
+        projectId,
+        environment: providerEnvironment,
+      }),
       environmentConfig(parseStoredConfig(record), providerEnvironment),
     );
     try {
@@ -1142,7 +1145,10 @@ async function pushProjectChanges(
 
   try {
     const instance: ProviderInstance = await provider.create(
-      providerContext(keychainAdapter, record.id, provider.name),
+      providerContext(keychainAdapter, record.id, provider.name, {
+        projectId,
+        environment: providerEnvironment,
+      }),
       environmentConfig(parseStoredConfig(record), providerEnvironment),
     );
     try {
@@ -1571,11 +1577,13 @@ function providerContext(
   keychain: KeychainAdapter,
   providerInstanceId: string,
   providerName: string,
+  scope?: { readonly projectId: string; readonly environment: string },
 ): ProviderContext {
   return {
     keychain: scopedKeychain(keychain, providerInstanceId),
     logger: createLogger(`providers/${providerName}`),
     fetch: globalThis.fetch,
+    ...(scope === undefined ? {} : scope),
   };
 }
 

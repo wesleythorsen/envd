@@ -874,13 +874,13 @@ function newProviderTarget(
 }
 
 function defaultPersonalProviderPath(): string {
-  return join(stateDir(), "providers", "personal.json");
+  return join(stateDir(), "providers", "personal");
 }
 
 function isDefaultPersonalLocalTarget(target: InitProviderTarget): boolean {
   return (
     target.kind === "new" &&
-    target.provider === "local-file" &&
+    target.provider === "envd" &&
     target.name === "personal"
   );
 }
@@ -966,7 +966,7 @@ async function selectProviderTarget(
 
   const instances = await deps.client.listProviderInstances();
   if (instances.length === 0) {
-    return newProviderTarget("local-file", "personal");
+    return newProviderTarget("envd", "personal");
   }
 
   const choice = await promptProviderInstanceChoice(
@@ -1011,9 +1011,9 @@ async function materializeProviderTarget(
     const path = defaultPersonalProviderPath();
     mkdirSync(dirname(path), { recursive: true });
     const created = await deps.client.createProviderInstance({
-      provider: "local-file",
+      provider: "envd",
       name: "personal",
-      config: { path },
+      config: { root: path },
       credentials: {},
     });
     return created.id;

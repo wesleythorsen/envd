@@ -4,11 +4,16 @@ import { findProvider, providers } from "../../src/providers/registry.js";
 describe("provider registry", () => {
   it("starts with the built-in providers", () => {
     expect(providers.map((provider) => provider.name)).toEqual([
+      "envd",
       "local-file",
       "doppler",
       "bitwarden-secret-manager",
       "aws-secrets-manager",
     ]);
+  });
+
+  it("finds the built-in envd provider", () => {
+    expect(findProvider("envd")?.name).toBe("envd");
   });
 
   it("finds the built-in local-file provider", () => {
