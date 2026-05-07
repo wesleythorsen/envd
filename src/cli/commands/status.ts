@@ -26,7 +26,7 @@ interface StatusOptions {
   readonly noAutostart?: boolean;
 }
 
-interface StatusDeps {
+export interface StatusDeps {
   readonly projectPath?: string;
   readonly client?: ControlClient;
   readonly createClient?: () => ControlClient;
