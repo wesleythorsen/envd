@@ -45,17 +45,28 @@ The tool from [vision.md](vision.md): a virtual `.env` file backed by a pluggabl
   - 1.3.8 On drift, the developer can choose to keep local, keep remote, or abort.
 
 - **1.4 Onboarding a new project takes one command**
-  - 1.4.1 Initialization selects or creates a backend instance.
+  - 1.4.1 Initialization scans common env-file locations and proposes environment mappings.
   - 1.4.2 Initialization is idempotent (safe to re-run).
   - 1.4.3 Initialization prevents `.env` from being checked in.
   - 1.4.4 Initialization works fully non-interactively given config via flags/env vars.
+  - 1.4.5 First-time initialization creates a local envd-managed provider instance named `personal`.
+  - 1.4.6 Imported source env files are retired with a receipt by default, not deleted silently.
+  - 1.4.7 Initialization records project metadata in user-level envd config, not in the repository.
 
 - **1.5 Onboarding a new machine from an existing project takes one command**
-  - 1.5.1 After cloning a repo that uses envd, one command restores the working `.env`.
+  - 1.5.1 A developer can initialize a cloned repo using their own provider instance/org and credentials.
   - 1.5.2 No secret material is required from the existing repo — creds come from the developer's own keychain.
+  - 1.5.3 Repo-local envd metadata is not required; project binding is machine-local.
 
 - **1.6 Current state is inspectable in one command**
-  - 1.6.1 The developer can see: is the daemon running, is the mount up, is this project known, any staged changes, last backend sync time.
+  - 1.6.1 The developer can see active environment, provider health, staged changes by environment, upstream freshness, `.env` link state, and next suggested action.
+  - 1.6.2 Daemon and mount diagnostics remain available without dominating the default status view.
+
+- **1.7 Environments are first-class**
+  - 1.7.1 A project can have multiple named environments/configs.
+  - 1.7.2 The developer can switch the active environment interactively or by name.
+  - 1.7.3 Switching environments preserves uncommitted changes in other environments.
+  - 1.7.4 A command can run with a named environment without changing the project-global active environment.
 
 ### 2. Extensibility (scope-relevant today, even if code is future)
 
@@ -63,6 +74,8 @@ The tool from [vision.md](vision.md): a virtual `.env` file backed by a pluggabl
   - 2.1.1 Adding a backend is a self-contained module conforming to a stable interface.
   - 2.1.2 MVP ships with at least a file-backed backend (for dev/test) and one real cloud backend (Doppler).
   - 2.1.3 A future self-hosted backend will plug in the same way as any other.
+  - 2.1.4 Provider type, provider instance/org, project/service, and environment/config are distinct concepts.
+  - 2.1.5 The developer can add a named provider instance and move a project between provider instances after verified copy.
 
 - **2.2 New data kinds plug in without rewriting the daemon or CLI**
   - 2.2.1 MVP implements the "secrets" data kind; the architecture does not hardcode against it.
@@ -111,9 +124,10 @@ The tool from [vision.md](vision.md): a virtual `.env` file backed by a pluggabl
   - 4.2.1 N simultaneous reads through an expired cache cause exactly one backend fetch.
 
 - **4.3 The daemon runs unattended**
-  - 4.3.1 It can be installed to start at user login on macOS and Linux.
+  - 4.3.1 Normal CLI commands auto-start and health-check the daemon when needed.
   - 4.3.2 It survives idle periods without leaks or socket accumulation.
   - 4.3.3 Graceful shutdown flushes state and releases resources.
+  - 4.3.4 It can be installed to start at user login on macOS and Linux.
 
 - **4.4 Failures are distinguishable**
   - 4.4.1 A taxonomy of error codes separates backend-auth, backend-unreachable, conflict, usage, mount, not-initialized, and internal errors.
@@ -156,6 +170,7 @@ The tool from [vision.md](vision.md): a virtual `.env` file backed by a pluggabl
 - **7.2 Discoverability**
   - 7.2.1 `--help` / built-in help covers every command with examples.
   - 7.2.2 Errors include actionable next steps, not just a code.
+  - 7.2.3 Support-process details are hidden from the happy path and exposed through advanced diagnostics.
 
 - **7.3 Scriptable**
   - 7.3.1 Every command supports a JSON output mode.
@@ -164,6 +179,12 @@ The tool from [vision.md](vision.md): a virtual `.env` file backed by a pluggabl
 - **7.4 Readable diffs**
   - 7.4.1 Staged vs. remote diffs are rendered in a `git diff`-like format by default.
   - 7.4.2 Values are hidden unless explicitly requested.
+
+- **7.5 User-editable local configuration**
+  - 7.5.1 Non-secret local config lives in TOML.
+  - 7.5.2 The developer can edit config with `$VISUAL` or `$EDITOR`.
+  - 7.5.3 Invalid config edits are rejected without losing the previous valid config.
+  - 7.5.4 Editable config, durable state, cache, runtime files, and mount directories use separate XDG-style locations by default.
 
 ### 8. Platform support
 
@@ -189,7 +210,7 @@ The tool from [vision.md](vision.md): a virtual `.env` file backed by a pluggabl
 
 - **9.3 Stable surfaces are named and versioned**
   - 9.3.1 Interfaces that extensions (future backends, data kinds, platforms) will depend on are documented.
-  - 9.3.2 On-disk formats (project file, state DB schema) have documented migration semantics.
+  - 9.3.2 On-disk formats (TOML config, state DB schema) have documented migration semantics.
 
 - **9.4 Provenance is preserved**
   - 9.4.1 The original design conversation and the final design docs are both kept in-repo.

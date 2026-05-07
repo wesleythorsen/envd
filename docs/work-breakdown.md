@@ -40,6 +40,35 @@ These rules exist because a lesser model left to its own devices tends to over-e
 
 ---
 
+## Approved UX redesign implementation track
+
+The post-MVP UX redesign is approved and is now the active implementation track. Use [ux-redesign-design.md](ux-redesign-design.md) for the agreed design and [ux-redesign-stories.md](ux-redesign-stories.md) for the story sequence.
+
+Where the older stories below conflict with the approved UX redesign, the redesign wins. Important supersessions:
+
+- repo-local `.envd.json` is replaced by user-level TOML config at the XDG config path;
+- `~/.envd/` as a single home is replaced by XDG-style config/state/cache/runtime separation, while `ENVD_HOME` remains a coarse override;
+- normal CLI commands auto-start and health-check daemon/mount support instead of requiring users to run `envd daemon start`;
+- `envd init` adopts existing env files into environments/configs and uses local `personal` provider instance by default;
+- imported source env files are retired with a receipt by default, not silently deleted;
+- provider type, provider instance/org, project/service, and environment/config are distinct concepts;
+- `envd use`, `envd run`, `envd eject`, `envd browse`, `envd doctor`, and `envd project move --provider <name>` are part of the redesigned CLI.
+
+Approved redesign story order:
+
+1. UX-0.1 — finalize approved UX docs.
+2. UX-1.1 and UX-1.2 — invisible daemon/mount preflight.
+3. UX-2.0 through UX-2.4 — TOML project registry, XDG layout, and environment-aware state/provider access.
+4. UX-3.1 through UX-3.4 — first-run env file adoption and safe source-file retirement.
+5. UX-4.1 through UX-4.4 — provider instances as orgs and project provider migration.
+6. UX-5.1 through UX-5.3 — `envd use`, `envd run`, and `envd eject`.
+7. UX-6.1 through UX-6.3 — workflow-centered status and doctor.
+8. UX-7.1 — CLI/TUI browse.
+9. UX-8.1 and UX-8.2 — README and canonical docs.
+10. UX-7.2 — deferred local browser surface after the CLI redesign is stable.
+
+---
+
 ## Wave 0 — Scaffolding (M0)
 
 These establish the skeleton. Almost everything else depends on this wave. Keep them tiny.

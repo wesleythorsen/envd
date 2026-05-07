@@ -13,7 +13,10 @@
 7. [extension-points.md](extension-points.md) — how future providers, data types, and features plug in.
 8. [implementation-plan.md](implementation-plan.md) — phased plan from empty repo to v0.1 (milestone-level).
 9. [work-breakdown.md](work-breakdown.md) — milestones broken into independently committable user stories + tasks, with dependency order and agent-facing guidance. Use this when delegating execution to sub-agents.
-10. [initial-idea-convo.md](initial-idea-convo.md) — the raw brainstorm the idea came from. Kept for provenance; not required reading.
+10. [ux-redesign.md](ux-redesign.md) — raw UX redesign idea dump for the post-MVP CLI redesign.
+11. [ux-redesign-design.md](ux-redesign-design.md) — draft design proposal for the UX redesign. Do not implement until approved.
+12. [ux-redesign-stories.md](ux-redesign-stories.md) — draft user-story breakdown for the UX redesign. Do not implement until approved.
+13. [initial-idea-convo.md](initial-idea-convo.md) — the raw brainstorm the idea came from. Kept for provenance; not required reading.
 
 ## Project quick facts
 

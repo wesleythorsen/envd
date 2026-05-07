@@ -41,7 +41,7 @@
 
 ### 2. Daemon — `envdd`
 
-- Long-running process, one per user session. Started on demand by the CLI (`envd daemon start`) or on login via `launchd` (macOS) / `systemd --user` (Linux).
+- Long-running process, one per user session. Normal CLI commands auto-start it when needed; advanced users can still call `envd daemon start` directly or install it on login via `launchd` (macOS) / `systemd --user` (Linux).
 - Hosts two HTTP servers, both bound to `127.0.0.1`:
   - **WebDAV server** (default port `1911`, configurable). This is what the OS talks to when the mounted volume is accessed.
   - **Control API** (default port `1910`, configurable). This is what the CLI talks to.
@@ -50,24 +50,33 @@
 
 ### 3. OS mount
 
-- macOS: `mount_webdav http://127.0.0.1:PORT/ ~/.envd/mount` (built-in, no install). `/Volumes/envd` can be used via config/override, but is not the default because creating `/Volumes/*` may require elevated permissions.
-- Linux: `mount.davfs http://127.0.0.1:PORT/ ~/.envd/mount` via the `davfs2` package. (Out-of-tree, but packaged in common distros.)
-- The mount is established by the CLI on `envd init` (if missing) and reused for every project afterward. The same mount hosts multiple projects under distinct paths.
+- macOS: `mount_webdav http://127.0.0.1:PORT/ <envd-runtime>/mount` (built-in, no install). `/Volumes/envd` can be used via config/override, but is not the default because creating `/Volumes/*` may require elevated permissions.
+- Linux: `mount.davfs http://127.0.0.1:PORT/ <envd-runtime>/mount` via the `davfs2` package. (Out-of-tree, but packaged in common distros.)
+- The mount is established by the CLI preflight when a command needs file access and reused for every project afterward. The same mount hosts multiple projects under distinct paths.
 
-### 4. Project symlink
+### 4. Project registration and symlink
 
 - On `envd link` (or the first `envd init`), the CLI creates a symlink in the project directory:
-  - `./.env -> ~/.envd/mount/p/<project-id>/.env`
-- The project ID is a UUID generated at init time. The mapping `project-id -> provider/config/naming` lives in the daemon's state store.
+  - `./.env -> <envd-mount>/p/<project-id>/.env`
+- The project ID is generated at init time. Project metadata is not written to the repository. The mapping from canonical project root to project ID, provider instance/org, provider project, active environment, and display defaults lives in the user-level envd TOML config.
 - **Per-project access token**: the path can optionally include a URL-safe token (e.g. `/p/<project-id>.<token>/.env`) so another local process can't enumerate `/p/` and read secrets. The symlink embeds the token; the daemon rejects requests with a wrong token. This is a v1 hardening — still only defense-in-depth, since loopback + file permissions are the main trust boundary.
 
-### 5. State store
+### 5. Local config, state, cache, and runtime layout
 
-- Per-user directory: `~/.envd/`
-  - `state.db` — SQLite file: projects, provider configs (references, not secrets), staged changes, last-known snapshots, timestamps.
-  - `secrets.enc` — encrypted blob for provider credentials that can't live in the OS keychain (fallback only). Primary store is OS keychain / libsecret.
-  - `envdd.pid`, `envdd.ports` — runtime files.
+- Editable config:
+  - `$XDG_CONFIG_HOME/envd/config.toml`, falling back to `~/.config/envd/config.toml`.
+  - Contains schema version, provider instances, project registrations, project root paths, provider project mappings, active environments, and non-secret defaults.
+- Durable state:
+  - `$XDG_STATE_HOME/envd/`, falling back to `~/.local/state/envd/`.
+  - `state.db` — SQLite file: state records, staged changes, last-known snapshots, timestamps, migrations.
+  - `secrets.enc` — encrypted fallback blob for provider credentials that can't live in the OS keychain. Primary store is OS keychain / libsecret.
   - `logs/` — rotating log files.
+- Cache:
+  - `$XDG_CACHE_HOME/envd/`, falling back to `~/.cache/envd/`.
+- Runtime:
+  - `$XDG_RUNTIME_DIR/envd/` when available, otherwise a safe fallback under the state directory.
+  - PID file, ports file, control token, and default mount directory live here or in the fallback.
+- `ENVD_HOME` remains a coarse override for tests, portable/dev use, and migration from the current `~/.envd/` layout.
 - SQLite is chosen over bespoke JSON so we can evolve the schema with migrations cleanly.
 
 ### 6. Provider abstraction
@@ -83,7 +92,7 @@ Adding AWS Secrets Manager, Vault, or our own provider later is an additive chan
 
 ### Read flow (app starts, reads `.env`)
 
-1. App opens `./.env`. Symlink resolves to `~/.envd/mount/p/<id>.<tok>/.env`.
+1. App opens `./.env`. Symlink resolves to `<envd-mount>/p/<id>.<tok>/.env`.
 2. macOS issues a `PROPFIND` then `GET` to the daemon's WebDAV server.
 3. Daemon authenticates the path (project id + token), loads the project record.
 4. Daemon asks the configured provider for the latest secrets. If a fresh-enough cached snapshot exists (TTL, default 60s), use that. Otherwise fetch.
@@ -113,7 +122,7 @@ This keeps "edit in your editor" and "publish to the team" as two distinct steps
 
 - Both HTTP servers bind **only** to `127.0.0.1`. No network exposure.
 - The WebDAV endpoint requires a token in the URL path (per-project), validated constant-time. Loopback is still the primary boundary.
-- The control API requires a token set in a local file readable only by the current user (`~/.envd/control.token`). CLI reads this file to authenticate.
+- The control API requires a token set in a local runtime file readable only by the current user. CLI reads this file to authenticate.
 - Provider credentials in **OS keychain** first:
   - macOS: `security`/Keychain via `keytar` or direct `security` CLI.
   - Linux: `libsecret` via `keytar`, falls back to age/scrypt-encrypted file with a user-prompted passphrase.
@@ -126,9 +135,11 @@ This keeps "edit in your editor" and "publish to the team" as two distinct steps
 | ------------------- | --------------------- | --------------------------------- |
 | WebDAV port         | `1911`                | `envd config set daemon.webdav.port` |
 | Control API port    | `1910`                | `envd config set daemon.control.port` |
-| State dir           | `~/.envd/`           | `$ENVD_HOME`                     |
-| Mount point (macOS) | `~/.envd/mount`      | `envd config set mount.macos.path` |
-| Mount point (Linux) | `~/.envd/mount`      | `envd config set mount.linux.path` |
+| Config file         | `$XDG_CONFIG_HOME/envd/config.toml` or `~/.config/envd/config.toml` | `$ENVD_HOME` for coarse override |
+| State dir           | `$XDG_STATE_HOME/envd/` or `~/.local/state/envd/` | `$ENVD_HOME` for coarse override |
+| Cache dir           | `$XDG_CACHE_HOME/envd/` or `~/.cache/envd/` | `$ENVD_HOME` for coarse override |
+| Runtime dir         | `$XDG_RUNTIME_DIR/envd/` or state fallback | `$ENVD_HOME` for coarse override |
+| Mount point         | `<envd-runtime>/mount` | `envd config set mount.path` or `$ENVD_MOUNT_PATH` |
 | WebDAV path schema  | `/p/<project-id>.<tok>/.env` | fixed in v1                       |
 
 ## Why WebDAV (vs. the alternatives we rejected)
