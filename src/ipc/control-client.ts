@@ -174,6 +174,15 @@ export interface ProjectPullResult {
   readonly snapshotFetchedAt: number;
 }
 
+export interface ProjectEnvironmentValuesOptions {
+  readonly environment?: string;
+}
+
+export interface ProjectEnvironmentValuesResult {
+  readonly environment: string;
+  readonly values: Record<string, string>;
+}
+
 export interface ProviderMetadata {
   readonly name: string;
   readonly environmentMode: "native" | "config-adapter" | "single";
@@ -911,4 +920,26 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
       return apiPost(base, token, "/v1/shutdown", timeoutMs, true);
     },
   };
+}
+
+export function readProjectEnvironmentValues(
+  id: string,
+  opts?: ProjectEnvironmentValuesOptions,
+  clientOpts?: ControlClientOpts,
+): Promise<ProjectEnvironmentValuesResult> {
+  const resolvedOpts: ControlClientOpts = clientOpts ?? {};
+  const base = resolveBaseUrl(resolvedOpts);
+  const token = resolveToken(resolvedOpts);
+  const timeoutMs = resolvedOpts.timeoutMs ?? 2000;
+  const params = new URLSearchParams();
+  if (opts?.environment !== undefined) {
+    params.set("environment", opts.environment);
+  }
+  const query = params.size === 0 ? "" : `?${params.toString()}`;
+  return apiGet<ProjectEnvironmentValuesResult>(
+    base,
+    token,
+    `/v1/projects/${encodeURIComponent(id)}/env${query}`,
+    timeoutMs,
+  );
 }

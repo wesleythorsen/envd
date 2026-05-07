@@ -624,6 +624,21 @@ describe("GET /v1/projects/:id/diff", () => {
       },
     });
   });
+
+  it("returns rendered environment values for process injection", async () => {
+    const res = await request(
+      `${diffBase}/v1/projects/${projectId}/env?environment=stage`,
+      {
+        headers: { Authorization: `Bearer ${diffToken}` },
+      },
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(await res.body.json()).toEqual({
+      environment: "stage",
+      values: { STAGE_ONLY: "stage" },
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

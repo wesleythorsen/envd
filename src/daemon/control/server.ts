@@ -826,6 +826,49 @@ async function handleGetProjectDiff(
   writeJson(res, 200, includeValues ? { keys, values: diff } : { keys });
 }
 
+async function handleGetProjectEnvironmentValues(
+  req: IncomingMessage,
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  stagingRepo: StagingRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+  cache: Cache<SecretMap>,
+  id: string,
+): Promise<void> {
+  const projects = requireProjectRepo(projectRepo);
+  const staging = requireStagingRepo(stagingRepo);
+  const project = projects.get(id);
+  if (project === undefined) {
+    writeJsonError(res, 404, "not_found", "Project not found");
+    return;
+  }
+
+  const projectEnvironment = resolveProjectEnvironment(
+    projects,
+    project,
+    requestEnvironment(req),
+  );
+  const environment = projectEnvironment.name;
+  const desired = staging.getDesired(id, environment);
+  const values =
+    desired === undefined
+      ? (
+          await readProjectSecrets(
+            id,
+            environment,
+            projectEnvironment.providerEnvironment,
+            project.providerInstanceId,
+            providerInstanceRepo,
+            keychain,
+            cache,
+          )
+        ).value
+      : stagedDesiredToSecretMap(desired);
+
+  writeJson(res, 200, { environment, values });
+}
+
 interface StagingSummary {
   readonly added: number;
   readonly modified: number;
@@ -2204,6 +2247,39 @@ function dispatch(
         providerInstanceRepo,
         stagingRepo,
         keychain,
+        projectId,
+      ).catch((err: unknown) => {
+        writeErrorFromUnknown(res, err);
+      });
+      return;
+    }
+
+    writeJsonError(
+      res,
+      405,
+      "method_not_allowed",
+      `Method ${method} not allowed on ${path}`,
+    );
+    return;
+  }
+
+  const projectEnvMatch = /^\/v1\/projects\/([^/]+)\/env$/.exec(path);
+  if (projectEnvMatch !== null) {
+    const projectId = projectEnvMatch[1];
+    if (projectId === undefined) {
+      writeJsonError(res, 404, "not_found", `No route for ${method} ${path}`);
+      return;
+    }
+
+    if (method === "GET") {
+      void handleGetProjectEnvironmentValues(
+        req,
+        res,
+        projectRepo,
+        providerInstanceRepo,
+        stagingRepo,
+        keychain,
+        cache,
         projectId,
       ).catch((err: unknown) => {
         writeErrorFromUnknown(res, err);
