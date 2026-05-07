@@ -27,7 +27,11 @@ const version = pkg.version as string;
 
 const program = new Command();
 
-program.name("envd").description("CLI for the envdd daemon").version(version);
+program
+  .name("envd")
+  .description("CLI for the envdd daemon")
+  .version(version)
+  .enablePositionalOptions();
 
 program
   .command("version")

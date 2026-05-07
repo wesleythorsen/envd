@@ -93,8 +93,10 @@ describe("init provider instance integration", () => {
         projectDir,
         {
           yes: true,
-          provider: "local-file",
+          newProvider: true,
+          providerType: "local-file",
           providerInstanceName: "CI local",
+          providerName: "CI local",
           configJson: JSON.stringify({ path: secretsPath }),
           credentialsJson: "{}",
         },

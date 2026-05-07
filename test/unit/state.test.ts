@@ -47,7 +47,7 @@ describe("openState", () => {
           .prepare<[], CountRow>("SELECT COUNT(*) AS count FROM _migrations")
           .get();
 
-        expect(row?.count).toBe(5);
+        expect(row?.count).toBe(7);
       } finally {
         second.close();
       }
@@ -105,6 +105,7 @@ describe("openState", () => {
           })),
         ).toEqual([
           { name: "project_id", type: "TEXT", notnull: 1, pk: 1 },
+          { name: "environment", type: "TEXT", notnull: 1, pk: 2 },
           { name: "updated_at", type: "INTEGER", notnull: 1, pk: 0 },
           { name: "desired", type: "TEXT", notnull: 1, pk: 0 },
           { name: "desired_version", type: "INTEGER", notnull: 1, pk: 0 },
