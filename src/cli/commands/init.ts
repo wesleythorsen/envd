@@ -21,6 +21,7 @@ import {
   ENV_FILE,
   ensureEnvSymlink,
   ensureGitignore,
+  isEnvdSymlink,
 } from "../project-files.js";
 import {
   findProjectRegistration,
@@ -50,7 +51,7 @@ interface InitProjectDeps {
   readonly client: ControlClient;
   readonly mountAdapter?: MountAdapter;
   readonly ensureMount?: boolean;
-  readonly confirm?: (projectPath: string) => Promise<boolean>;
+  readonly confirm?: (plan: InitAdoptionPlan) => Promise<boolean>;
   readonly prompt?: NonNullable<ProviderCommandDeps["prompt"]>;
   readonly promptSecret?: ProviderCommandDeps["promptSecret"];
 }
@@ -61,6 +62,45 @@ export interface InitResult {
   readonly envPath: string;
   readonly symlinkTarget: string;
   readonly envFiles: EnvFileDiscoveryResult;
+  readonly adoptionPlan: InitAdoptionPlan;
+}
+
+export interface InitProviderTarget {
+  readonly kind: "existing" | "new";
+  readonly id?: string;
+  readonly provider?: string;
+  readonly name?: string;
+}
+
+export interface InitAdoptionPlanFile {
+  readonly path: string;
+  readonly relativePath: string;
+  readonly environment: string;
+  readonly inferredEnvironment: string;
+  readonly keyCount: number;
+  readonly keys: readonly string[];
+  readonly ambiguous: boolean;
+  readonly duplicateKeys: readonly string[];
+}
+
+export interface InitAdoptionPlan {
+  readonly projectRoot: string;
+  readonly activeEnvironment: string;
+  readonly providerTarget: InitProviderTarget;
+  readonly sourceFileDisposition: "leave-in-place";
+  readonly files: readonly InitAdoptionPlanFile[];
+  readonly parseErrors: EnvFileDiscoveryResult["parseErrors"];
+  readonly duplicateMappings: EnvFileDiscoveryResult["duplicates"];
+}
+
+interface PlanFileInput {
+  readonly path: string;
+  readonly relativePath: string;
+  readonly inferredEnvironment: string;
+  readonly environment: string;
+  readonly keyCount: number;
+  readonly keys: readonly string[];
+  readonly ambiguous: boolean;
 }
 
 function readWebdavUrl(): string {
@@ -94,6 +134,10 @@ function collectOption(value: string, previous: readonly string[]): string[] {
   return [...previous, value];
 }
 
+function uniqueSorted(values: Iterable<string>): readonly string[] {
+  return [...new Set(values)].sort();
+}
+
 async function ensureMounted(adapter: MountAdapter): Promise<void> {
   const path = mountPath();
   if (await adapter.isMounted(path)) {
@@ -102,11 +146,210 @@ async function ensureMounted(adapter: MountAdapter): Promise<void> {
   await adapter.mount(readWebdavUrl(), path);
 }
 
-async function promptConfirm(projectPath: string): Promise<boolean> {
+async function promptConfirm(plan: InitAdoptionPlan): Promise<boolean> {
   const answer = await defaultPrompt(
-    `Initialize envd in ${projectPath}? [y/N]`,
+    `Apply this envd init plan for ${plan.projectRoot}? [y/N]`,
   );
   return answer.trim().toLowerCase() === "y";
+}
+
+function duplicateKeysForFiles(
+  files: readonly PlanFileInput[],
+): Map<string, readonly string[]> {
+  const byEnvironment = new Map<string, PlanFileInput[]>();
+  for (const file of files) {
+    const existing = byEnvironment.get(file.environment);
+    if (existing === undefined) {
+      byEnvironment.set(file.environment, [file]);
+    } else {
+      existing.push(file);
+    }
+  }
+
+  const byPath = new Map<string, readonly string[]>();
+  for (const environmentFiles of byEnvironment.values()) {
+    const counts = new Map<string, number>();
+    for (const file of environmentFiles) {
+      for (const key of file.keys) {
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+    const duplicated = [...counts.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([key]) => key)
+      .sort();
+    for (const file of environmentFiles) {
+      byPath.set(
+        file.path,
+        file.keys.filter((key) => duplicated.includes(key)),
+      );
+    }
+  }
+  return byPath;
+}
+
+function defaultActiveEnvironment(files: readonly PlanFileInput[]): string {
+  return (
+    files.find((file) => file.environment === "default")?.environment ??
+    files[0]?.environment ??
+    "default"
+  );
+}
+
+function buildAdoptionPlan(
+  projectRoot: string,
+  envFiles: EnvFileDiscoveryResult,
+  providerTarget: InitProviderTarget,
+  overrides: {
+    readonly environments?: ReadonlyMap<string, string>;
+    readonly activeEnvironment?: string;
+  } = {},
+): InitAdoptionPlan {
+  const files: readonly PlanFileInput[] = envFiles.files.map((file) => ({
+    path: file.path,
+    relativePath: file.relativePath,
+    inferredEnvironment: file.classification.environment,
+    environment:
+      overrides.environments?.get(file.path) ?? file.classification.environment,
+    keyCount: file.keyCount,
+    keys: file.keys,
+    ambiguous: file.classification.ambiguous,
+  }));
+  const duplicateKeys = duplicateKeysForFiles(files);
+  const activeEnvironment =
+    overrides.activeEnvironment ?? defaultActiveEnvironment(files);
+
+  return {
+    projectRoot,
+    activeEnvironment,
+    providerTarget,
+    sourceFileDisposition: "leave-in-place",
+    files: files.map((file) => ({
+      path: file.path,
+      relativePath: file.relativePath,
+      environment: file.environment,
+      inferredEnvironment: file.inferredEnvironment,
+      keyCount: file.keyCount,
+      keys: file.keys,
+      ambiguous:
+        file.ambiguous || file.environment !== file.inferredEnvironment,
+      duplicateKeys: duplicateKeys.get(file.path) ?? [],
+    })),
+    parseErrors: envFiles.parseErrors,
+    duplicateMappings: envFiles.duplicates,
+  };
+}
+
+function providerTargetLabel(target: InitProviderTarget): string {
+  if (target.kind === "existing") {
+    return `${target.name ?? target.id ?? "existing provider instance"} (${target.provider ?? "provider"})`;
+  }
+  return `${target.name ?? target.provider ?? "new provider instance"} (${target.provider ?? "provider"})`;
+}
+
+function formatAdoptionPlan(plan: InitAdoptionPlan): string {
+  const lines = [
+    `envd init plan for ${plan.projectRoot}`,
+    `Provider target: ${providerTargetLabel(plan.providerTarget)}`,
+    `Active environment: ${plan.activeEnvironment}`,
+    `Source files: ${plan.sourceFileDisposition}`,
+  ];
+
+  if (plan.files.length === 0) {
+    lines.push("Env files: none discovered");
+  } else {
+    lines.push("Env files:");
+    for (const file of plan.files) {
+      const flags = [
+        file.ambiguous ? "ambiguous" : "",
+        file.duplicateKeys.length > 0
+          ? `duplicate keys: ${file.duplicateKeys.join(", ")}`
+          : "",
+      ].filter((flag) => flag !== "");
+      const suffix = flags.length === 0 ? "" : ` (${flags.join("; ")})`;
+      lines.push(
+        `- ${file.relativePath} -> ${file.environment} (${file.keyCount} keys)${suffix}`,
+      );
+    }
+  }
+
+  if (plan.parseErrors.length > 0) {
+    lines.push("Parse errors:");
+    for (const err of plan.parseErrors) {
+      lines.push(`- ${err.relativePath}: ${err.message}`);
+    }
+  }
+
+  if (plan.duplicateMappings.length > 0) {
+    lines.push("Duplicate environment mappings:");
+    for (const mapping of plan.duplicateMappings) {
+      lines.push(
+        `- ${mapping.environment}: ${mapping.conflictingKeys.length} conflicting keys`,
+      );
+    }
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function validateNonInteractivePlan(plan: InitAdoptionPlan): void {
+  if (plan.parseErrors.length > 0) {
+    throw new EnvdError("env file discovery found parse errors", {
+      code: "bad_dotenv",
+      details: { files: plan.parseErrors.map((err) => err.relativePath) },
+    });
+  }
+
+  const conflicting = plan.duplicateMappings.filter(
+    (mapping) => mapping.conflictingKeys.length > 0,
+  );
+  if (conflicting.length > 0) {
+    throw new EnvdError(
+      "multiple env files map to the same environment with conflicting values",
+      {
+        code: "usage_error",
+        details: {
+          environments: conflicting.map((mapping) => mapping.environment),
+        },
+      },
+    );
+  }
+}
+
+async function promptPlanEdits(
+  plan: InitAdoptionPlan,
+  envFiles: EnvFileDiscoveryResult,
+  prompt: NonNullable<ProviderCommandDeps["prompt"]>,
+): Promise<InitAdoptionPlan> {
+  const environmentOverrides = new Map<string, string>();
+  for (const file of plan.files) {
+    const answer = await prompt(`Environment for ${file.relativePath}`, {
+      defaultValue: file.environment,
+    });
+    const environment = answer.trim() === "" ? file.environment : answer.trim();
+    if (environment === "") {
+      throw new EnvdError("environment name must be non-empty", {
+        code: "usage_error",
+      });
+    }
+    environmentOverrides.set(file.path, environment);
+  }
+
+  const activeAnswer = await prompt("Active environment", {
+    defaultValue: plan.activeEnvironment,
+  });
+  const activeEnvironment =
+    activeAnswer.trim() === "" ? plan.activeEnvironment : activeAnswer.trim();
+  if (activeEnvironment === "") {
+    throw new EnvdError("active environment must be non-empty", {
+      code: "usage_error",
+    });
+  }
+
+  return buildAdoptionPlan(plan.projectRoot, envFiles, plan.providerTarget, {
+    environments: environmentOverrides,
+    activeEnvironment,
+  });
 }
 
 function printResult(result: InitResult, json: boolean | undefined): void {
@@ -127,6 +370,7 @@ async function existingProjectResult(
   projectDir: string,
   registration: ProjectRegistration,
   envFiles: EnvFileDiscoveryResult,
+  adoptionPlan: InitAdoptionPlan,
 ): Promise<InitResult> {
   let project: ProjectDetail;
   try {
@@ -142,7 +386,7 @@ async function existingProjectResult(
   }
 
   ensureGitignore(projectDir);
-  ensureEnvSymlink(projectDir, project.mountPath);
+  ensureProjectEnvSymlink(projectDir, project.mountPath, adoptionPlan);
 
   return {
     status: "already_initialized",
@@ -150,7 +394,32 @@ async function existingProjectResult(
     envPath: join(projectDir, ENV_FILE),
     symlinkTarget: project.mountPath,
     envFiles,
+    adoptionPlan,
   };
+}
+
+function planEnvironmentNames(plan: InitAdoptionPlan): readonly string[] {
+  return uniqueSorted([
+    "default",
+    plan.activeEnvironment,
+    ...plan.files.map((file) => file.environment),
+  ]);
+}
+
+function ensureProjectEnvSymlink(
+  projectDir: string,
+  target: string,
+  plan: InitAdoptionPlan,
+): void {
+  const envPath = join(projectDir, ENV_FILE);
+  if (
+    existsSync(envPath) &&
+    !isEnvdSymlink(envPath) &&
+    plan.files.some((file) => file.relativePath === ENV_FILE)
+  ) {
+    return;
+  }
+  ensureEnvSymlink(projectDir, target);
 }
 
 async function newProjectResult(
@@ -158,20 +427,39 @@ async function newProjectResult(
   projectDir: string,
   providerInstanceId: string,
   envFiles: EnvFileDiscoveryResult,
+  adoptionPlan: InitAdoptionPlan,
 ): Promise<InitResult> {
   const created: CreateProjectResult = await client.createProject({
     path: projectDir,
     providerInstanceId,
   });
+  const environments = planEnvironmentNames(adoptionPlan);
+  for (const environment of environments) {
+    if (environment !== "default") {
+      await client.createProjectEnvironment(created.id, {
+        name: environment,
+        providerEnvironment: environment,
+      });
+    }
+  }
+  if (adoptionPlan.activeEnvironment !== "default") {
+    await client.setProjectActiveEnvironment(
+      created.id,
+      adoptionPlan.activeEnvironment,
+    );
+  }
   registerProject({
     id: created.id,
     root: projectDir,
     providerInstanceId,
-    activeEnvironment: "default",
-    environments: [{ name: "default", providerEnvironment: "default" }],
+    activeEnvironment: adoptionPlan.activeEnvironment,
+    environments: environments.map((environment) => ({
+      name: environment,
+      providerEnvironment: environment,
+    })),
   });
   ensureGitignore(projectDir);
-  ensureEnvSymlink(projectDir, created.mountPath);
+  ensureProjectEnvSymlink(projectDir, created.mountPath, adoptionPlan);
 
   return {
     status: "initialized",
@@ -179,6 +467,7 @@ async function newProjectResult(
     envPath: join(projectDir, ENV_FILE),
     symlinkTarget: created.mountPath,
     envFiles,
+    adoptionPlan,
   };
 }
 
@@ -367,12 +656,14 @@ function validateProviderInstanceFlags(options: InitOptions): void {
 async function createProviderInstanceForInit(
   options: InitOptions,
   deps: InitProjectDeps,
+  selectedProviderName?: string,
 ): Promise<string> {
   const prompt = deps.prompt ?? defaultPrompt;
   const providerName =
-    options.provider === undefined
+    selectedProviderName ??
+    (options.provider === undefined
       ? await promptProviderName(await deps.client.listProviders(), prompt)
-      : requireNonEmptyFlag(options.provider, "--provider");
+      : requireNonEmptyFlag(options.provider, "--provider"));
   const created = await addProviderInstance(
     providerName,
     providerAddOptions(
@@ -393,22 +684,57 @@ async function createProviderInstanceForInit(
   return created.id;
 }
 
-async function selectProviderInstanceId(
+async function providerInstanceTarget(
+  deps: InitProjectDeps,
+  id: string,
+): Promise<InitProviderTarget> {
+  try {
+    const instance = await deps.client.getProviderInstance(id);
+    return {
+      kind: "existing",
+      id: instance.id,
+      provider: instance.provider,
+      name: instance.name,
+    };
+  } catch {
+    return { kind: "existing", id };
+  }
+}
+
+function newProviderTarget(
+  provider: string,
+  name: string | undefined,
+): InitProviderTarget {
+  return name === undefined
+    ? { kind: "new", provider }
+    : { kind: "new", provider, name };
+}
+
+async function selectProviderTarget(
   options: InitOptions,
   deps: InitProjectDeps,
-): Promise<string> {
+): Promise<InitProviderTarget> {
   validateProviderInstanceFlags(options);
   if (options.providerInstance !== undefined) {
-    return options.providerInstance;
+    return providerInstanceTarget(deps, options.providerInstance);
   }
 
   if (options.provider !== undefined) {
-    return createProviderInstanceForInit(options, deps);
+    return newProviderTarget(
+      requireNonEmptyFlag(options.provider, "--provider"),
+      options.providerInstanceName,
+    );
   }
 
   const instances = await deps.client.listProviderInstances();
   if (instances.length === 0) {
-    return createProviderInstanceForInit(options, deps);
+    return newProviderTarget(
+      await promptProviderName(
+        await deps.client.listProviders(),
+        deps.prompt ?? defaultPrompt,
+      ),
+      options.providerInstanceName,
+    );
   }
 
   const choice = await promptProviderInstanceChoice(
@@ -416,9 +742,36 @@ async function selectProviderInstanceId(
     deps.prompt ?? defaultPrompt,
   );
   if (choice.kind === "existing") {
-    return choice.id;
+    return providerInstanceTarget(deps, choice.id);
   }
-  return createProviderInstanceForInit(options, deps);
+  return newProviderTarget(
+    await promptProviderName(
+      await deps.client.listProviders(),
+      deps.prompt ?? defaultPrompt,
+    ),
+    options.providerInstanceName,
+  );
+}
+
+async function materializeProviderTarget(
+  target: InitProviderTarget,
+  options: InitOptions,
+  deps: InitProjectDeps,
+): Promise<string> {
+  if (target.kind === "existing") {
+    if (target.id === undefined) {
+      throw new EnvdError("provider instance target is missing an id", {
+        code: "internal",
+      });
+    }
+    return target.id;
+  }
+  if (target.provider === undefined) {
+    throw new EnvdError("provider target is missing a provider type", {
+      code: "internal",
+    });
+  }
+  return createProviderInstanceForInit(options, deps, target.provider);
 }
 
 export async function initProject(
@@ -434,9 +787,28 @@ export async function initProject(
     });
   }
 
-  if (options.yes !== true) {
+  const envFiles = discoverEnvFiles(projectDir, {
+    scanPaths: options.scan ?? [],
+  });
+  let registration = findProjectRegistration(projectDir);
+  const providerTarget =
+    registration?.providerInstanceId === undefined
+      ? await selectProviderTarget(options, deps)
+      : await providerInstanceTarget(deps, registration.providerInstanceId);
+  let adoptionPlan = buildAdoptionPlan(projectDir, envFiles, providerTarget);
+
+  if (options.yes === true) {
+    validateNonInteractivePlan(adoptionPlan);
+  } else {
+    output.write(formatAdoptionPlan(adoptionPlan));
+    adoptionPlan = await promptPlanEdits(
+      adoptionPlan,
+      envFiles,
+      deps.prompt ?? defaultPrompt,
+    );
+    output.write(formatAdoptionPlan(adoptionPlan));
     const confirm = deps.confirm ?? promptConfirm;
-    if (!(await confirm(projectDir))) {
+    if (!(await confirm(adoptionPlan))) {
       throw new EnvdError("initialization cancelled", { code: "usage_error" });
     }
   }
@@ -446,26 +818,31 @@ export async function initProject(
     await ensureMounted(adapter);
   }
 
-  migrateLegacyProjectFile(projectDir);
-  const envFiles = discoverEnvFiles(projectDir, {
-    scanPaths: options.scan ?? [],
-  });
-  const registration = findProjectRegistration(projectDir);
+  if (registration === null) {
+    migrateLegacyProjectFile(projectDir);
+    registration = findProjectRegistration(projectDir);
+  }
   if (registration !== null) {
     return existingProjectResult(
       deps.client,
       projectDir,
       registration,
       envFiles,
+      adoptionPlan,
     );
   }
 
-  const providerInstanceId = await selectProviderInstanceId(options, deps);
+  const providerInstanceId = await materializeProviderTarget(
+    adoptionPlan.providerTarget,
+    options,
+    deps,
+  );
   return newProjectResult(
     deps.client,
     projectDir,
     providerInstanceId,
     envFiles,
+    adoptionPlan,
   );
 }
 

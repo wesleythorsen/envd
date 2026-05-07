@@ -44,6 +44,12 @@ class FakeControlClient implements ControlClient {
   private providerInstances: ProviderInstanceDetail[];
   createProjectCalls = 0;
   createProviderInstanceCalls = 0;
+  createdEnvironments: Array<{ readonly id: string; readonly name: string }> =
+    [];
+  activeEnvironmentChanges: Array<{
+    readonly id: string;
+    readonly name: string;
+  }> = [];
   lastCreateProjectInput: CreateProjectInput | undefined;
   lastCreateProviderInstanceInput: CreateProviderInstanceInput | undefined;
 
@@ -101,6 +107,30 @@ class FakeControlClient implements ControlClient {
 
   getProjectStatus(): Promise<never> {
     return Promise.reject(new Error("not needed"));
+  }
+
+  listProjectEnvironments(): Promise<never> {
+    return Promise.reject(new Error("not needed"));
+  }
+
+  createProjectEnvironment(
+    id: string,
+    input: { readonly name: string },
+  ): Promise<never> {
+    this.createdEnvironments.push({ id, name: input.name });
+    return Promise.resolve(undefined as never);
+  }
+
+  setProjectActiveEnvironment(
+    id: string,
+    name: string,
+  ): Promise<ProjectDetail> {
+    this.activeEnvironmentChanges.push({ id, name });
+    if (this.project === undefined || this.project.id !== id) {
+      return Promise.reject(new Error("project not found"));
+    }
+    this.project = { ...this.project, activeEnvironment: name };
+    return Promise.resolve(this.project);
   }
 
   getProjectDiff(): Promise<never> {
@@ -303,6 +333,86 @@ describe("initProject", () => {
       expect(
         result.envFiles.files.map((file) => file.classification.environment),
       ).toEqual(["dev", "stage", "prod"]);
+      expect(client.createdEnvironments).toEqual([
+        { id: "project-1", name: "dev" },
+        { id: "project-1", name: "prod" },
+        { id: "project-1", name: "stage" },
+      ]);
+      expect(client.activeEnvironmentChanges).toEqual([
+        { id: "project-1", name: "dev" },
+      ]);
+      expect(readEnvdConfig().projects[0]?.activeEnvironment).toBe("dev");
+    });
+  });
+
+  it("cancels after showing the adoption plan without mutating project state", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = new FakeControlClient(
+        "/Volumes/envd/p/project-1.token-1/.env",
+      );
+      writeFileSync(join(projectDir, ".env.dev"), "DEV=1\n", "utf-8");
+
+      await expect(
+        initProject(
+          projectDir,
+          { providerInstance: "instance-1" },
+          {
+            client,
+            ensureMount: false,
+            prompt: () => Promise.resolve(""),
+            confirm: () => Promise.resolve(false),
+          },
+        ),
+      ).rejects.toSatisfy((error: unknown) => {
+        return error instanceof EnvdError && error.code === "usage_error";
+      });
+
+      expect(client.createProjectCalls).toBe(0);
+      expect(client.createProviderInstanceCalls).toBe(0);
+      expect(readEnvdConfig().projects).toEqual([]);
+      expect(existsSync(join(projectDir, ".env"))).toBe(false);
+    });
+  });
+
+  it("allows interactive environment remapping and active environment selection", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = new FakeControlClient(
+        "/Volumes/envd/p/project-1.token-1/.env",
+      );
+      writeFileSync(join(projectDir, ".env.dev"), "DEV=1\n", "utf-8");
+      writeFileSync(join(projectDir, ".env.stage"), "STAGE=1\n", "utf-8");
+      const answers = ["renamed", "prod", "prod"];
+
+      const result = await initProject(
+        projectDir,
+        { providerInstance: "instance-1" },
+        {
+          client,
+          ensureMount: false,
+          prompt: () => Promise.resolve(answers.shift() ?? ""),
+          confirm: () => Promise.resolve(true),
+        },
+      );
+
+      expect(result.adoptionPlan.files.map((file) => file.environment)).toEqual(
+        ["renamed", "prod"],
+      );
+      expect(result.adoptionPlan.activeEnvironment).toBe("prod");
+      expect(client.createdEnvironments).toEqual([
+        { id: "project-1", name: "prod" },
+        { id: "project-1", name: "renamed" },
+      ]);
+      expect(client.activeEnvironmentChanges).toEqual([
+        { id: "project-1", name: "prod" },
+      ]);
+      expect(readEnvdConfig().projects[0]).toMatchObject({
+        activeEnvironment: "prod",
+        environments: [
+          { name: "default", providerEnvironment: "default" },
+          { name: "prod", providerEnvironment: "prod" },
+          { name: "renamed", providerEnvironment: "renamed" },
+        ],
+      });
     });
   });
 
