@@ -434,6 +434,70 @@ function handleGetProject(
   });
 }
 
+function handleListProjectEnvironments(
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+  id: string,
+): void {
+  const repo = requireProjectRepo(projectRepo);
+  if (repo.get(id) === undefined) {
+    writeJsonError(res, 404, "not_found", "Project not found");
+    return;
+  }
+  writeJson(res, 200, { environments: repo.listEnvironments(id) });
+}
+
+async function handleCreateProjectEnvironment(
+  req: IncomingMessage,
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+  id: string,
+): Promise<void> {
+  const repo = requireProjectRepo(projectRepo);
+  const body = await readJsonBody(req);
+  const name = (body as { name?: unknown }).name;
+  const providerEnvironment = (body as { providerEnvironment?: unknown })
+    .providerEnvironment;
+  if (typeof name !== "string" || name.trim() === "") {
+    throw new EnvdError("environment name must be a non-empty string", {
+      code: "usage_error",
+    });
+  }
+  if (
+    providerEnvironment !== undefined &&
+    (typeof providerEnvironment !== "string" ||
+      providerEnvironment.trim() === "")
+  ) {
+    throw new EnvdError(
+      "providerEnvironment must be a non-empty string when provided",
+      { code: "usage_error" },
+    );
+  }
+  const environment = repo.createEnvironment(id, name, providerEnvironment);
+  writeJson(res, 201, environment);
+}
+
+async function handleSetProjectActiveEnvironment(
+  req: IncomingMessage,
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+  id: string,
+): Promise<void> {
+  const repo = requireProjectRepo(projectRepo);
+  const body = await readJsonBody(req);
+  const name = (body as { name?: unknown }).name;
+  if (typeof name !== "string" || name.trim() === "") {
+    throw new EnvdError("environment name must be a non-empty string", {
+      code: "usage_error",
+    });
+  }
+  const project = repo.setActiveEnvironment(id, name);
+  writeJson(res, 200, {
+    ...project,
+    mountPath: projectMountPath(project.id, project.token),
+  });
+}
+
 function emptySecretDiffKeys(): SecretDiffKeys {
   return { added: [], modified: [], deleted: [] };
 }
@@ -459,6 +523,10 @@ function stagedDesiredToSecretMap(desired: StagedDesiredMap): SecretMap {
     }
   }
   return map;
+}
+
+function scopedProjectKey(projectId: string, environment: string): string {
+  return `${projectId}\0${environment}`;
 }
 
 async function fetchProjectSecrets(
@@ -539,6 +607,7 @@ function readCacheTtlMs(config: unknown): number {
 
 async function readProjectSecrets(
   projectId: string,
+  environment: string,
   providerInstanceId: string | null,
   providerInstanceRepo: ProviderInstanceRepo | undefined,
   keychain: KeychainAdapter | undefined,
@@ -562,7 +631,7 @@ async function readProjectSecrets(
 
   const ttlMs = readCacheTtlMs(parseStoredConfig(record));
   return await cache.get(
-    projectId,
+    scopedProjectKey(projectId, environment),
     () =>
       fetchProjectSecrets(
         projectId,
@@ -576,6 +645,7 @@ async function readProjectSecrets(
 
 async function refreshProjectSecrets(
   projectId: string,
+  environment: string,
   providerInstanceId: string | null,
   providerInstanceRepo: ProviderInstanceRepo | undefined,
   keychain: KeychainAdapter | undefined,
@@ -598,9 +668,10 @@ async function refreshProjectSecrets(
   }
 
   const ttlMs = readCacheTtlMs(parseStoredConfig(record));
-  cache.invalidate(projectId);
+  const cacheKey = scopedProjectKey(projectId, environment);
+  cache.invalidate(cacheKey);
   return await cache.get(
-    projectId,
+    cacheKey,
     () =>
       fetchProjectSecrets(
         projectId,
@@ -614,13 +685,14 @@ async function refreshProjectSecrets(
 
 async function readBaselineProjectSecrets(
   projectId: string,
+  environment: string,
   providerInstanceId: string | null,
   providerInstanceRepo: ProviderInstanceRepo | undefined,
   keychain: KeychainAdapter | undefined,
   cache: Cache<SecretMap>,
 ): Promise<CacheResult<SecretMap>> {
   return await cache.get(
-    projectId,
+    scopedProjectKey(projectId, environment),
     () =>
       fetchProjectSecrets(
         projectId,
@@ -650,7 +722,7 @@ async function handleGetProjectDiff(
   }
 
   const includeValues = requestIncludesValues(req);
-  const desired = staging.getDesired(id);
+  const desired = staging.getDesired(id, project.activeEnvironment);
   if (desired === undefined) {
     writeJson(
       res,
@@ -709,8 +781,9 @@ async function handleGetProjectStatus(
     return;
   }
 
-  const desired = staging.getDesired(id);
-  const cached = cache.peek(id);
+  const desired = staging.getDesired(id, project.activeEnvironment);
+  const cacheKey = scopedProjectKey(id, project.activeEnvironment);
+  const cached = cache.peek(cacheKey);
   let provider: string | null = null;
   let providerInstanceName: string | null = null;
   let providerHealthy: boolean | null = null;
@@ -730,6 +803,7 @@ async function handleGetProjectStatus(
       try {
         const snapshot = await readProjectSecrets(
           id,
+          project.activeEnvironment,
           project.providerInstanceId,
           providerInstanceRepo,
           keychain,
@@ -972,7 +1046,7 @@ async function handlePullProject(
   }
 
   const input = parseProjectPullBody(await readJsonBody(req));
-  const desired = staging.getDesired(id);
+  const desired = staging.getDesired(id, project.activeEnvironment);
   if (desired !== undefined && !input.force) {
     writeJsonError(
       res,
@@ -984,9 +1058,10 @@ async function handlePullProject(
     return;
   }
 
-  staging.clear(id);
+  staging.clear(id, project.activeEnvironment);
   const snapshot = await refreshProjectSecrets(
     id,
+    project.activeEnvironment,
     project.providerInstanceId,
     providerInstanceRepo,
     keychain,
@@ -1014,10 +1089,11 @@ async function handleCommitProject(
   }
 
   const input = parseProjectCommitBody(await readJsonBody(req));
-  const stagedDesired = staging.getDesired(id);
+  const stagedDesired = staging.getDesired(id, project.activeEnvironment);
   if (stagedDesired === undefined) {
     await refreshProjectSecrets(
       id,
+      project.activeEnvironment,
       project.providerInstanceId,
       providerInstanceRepo,
       keychain,
@@ -1033,6 +1109,7 @@ async function handleCommitProject(
   const desired = stagedDesiredToSecretMap(stagedDesired);
   const baseline = await readBaselineProjectSecrets(
     id,
+    project.activeEnvironment,
     project.providerInstanceId,
     providerInstanceRepo,
     keychain,
@@ -1040,6 +1117,7 @@ async function handleCommitProject(
   );
   const fresh = await refreshProjectSecrets(
     id,
+    project.activeEnvironment,
     project.providerInstanceId,
     providerInstanceRepo,
     keychain,
@@ -1068,8 +1146,8 @@ async function handleCommitProject(
   const changes = toChangeSet(fresh.value, finalDesired);
 
   if (isEmptyChangeSet(changes)) {
-    staging.clear(id);
-    cache.invalidate(id);
+    staging.clear(id, project.activeEnvironment);
+    cache.invalidate(scopedProjectKey(id, project.activeEnvironment));
     writeJson(res, 200, { applied: changes, commitId: null });
     return;
   }
@@ -1095,8 +1173,8 @@ async function handleCommitProject(
     return;
   }
 
-  staging.clear(id);
-  cache.invalidate(id);
+  staging.clear(id, project.activeEnvironment);
+  cache.invalidate(scopedProjectKey(id, project.activeEnvironment));
   writeJson(res, 200, { applied: result.applied, commitId: null });
 }
 
@@ -1751,6 +1829,75 @@ function dispatch(
         stagingRepo,
         keychain,
         cache,
+        projectId,
+      ).catch((err: unknown) => {
+        writeErrorFromUnknown(res, err);
+      });
+      return;
+    }
+
+    writeJsonError(
+      res,
+      405,
+      "method_not_allowed",
+      `Method ${method} not allowed on ${path}`,
+    );
+    return;
+  }
+
+  const projectEnvironmentsMatch =
+    /^\/v1\/projects\/([^/]+)\/environments$/.exec(path);
+  if (projectEnvironmentsMatch !== null) {
+    const projectId = projectEnvironmentsMatch[1];
+    if (projectId === undefined) {
+      writeJsonError(res, 404, "not_found", `No route for ${method} ${path}`);
+      return;
+    }
+
+    try {
+      if (method === "GET") {
+        handleListProjectEnvironments(res, projectRepo, projectId);
+        return;
+      }
+      if (method === "POST") {
+        void handleCreateProjectEnvironment(
+          req,
+          res,
+          projectRepo,
+          projectId,
+        ).catch((err: unknown) => {
+          writeErrorFromUnknown(res, err);
+        });
+        return;
+      }
+    } catch (err: unknown) {
+      writeErrorFromUnknown(res, err);
+      return;
+    }
+
+    writeJsonError(
+      res,
+      405,
+      "method_not_allowed",
+      `Method ${method} not allowed on ${path}`,
+    );
+    return;
+  }
+
+  const projectActiveEnvironmentMatch =
+    /^\/v1\/projects\/([^/]+)\/active-environment$/.exec(path);
+  if (projectActiveEnvironmentMatch !== null) {
+    const projectId = projectActiveEnvironmentMatch[1];
+    if (projectId === undefined) {
+      writeJsonError(res, 404, "not_found", `No route for ${method} ${path}`);
+      return;
+    }
+
+    if (method === "POST") {
+      void handleSetProjectActiveEnvironment(
+        req,
+        res,
+        projectRepo,
         projectId,
       ).catch((err: unknown) => {
         writeErrorFromUnknown(res, err);

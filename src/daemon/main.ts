@@ -8,6 +8,7 @@ import { startControlServer, generateToken } from "./control/server.js";
 import {
   controlTokenFile,
   daemonLogFile,
+  ensureRuntimeDir,
   ensureStateDir,
   pidFile,
   portsFile,
@@ -21,7 +22,11 @@ import { createEncryptedStagingCodec, StagingRepo } from "../core/staging.js";
 import { ProviderInstanceRepo } from "../core/provider-instance.js";
 import { createKeychainAdapter } from "../core/keychain.js";
 import type { SecretMap } from "../providers/base.js";
-import { LOG_FORMAT_ENV_VAR } from "../shared/product.js";
+import {
+  CONTROL_PORT_ENV_VAR,
+  LOG_FORMAT_ENV_VAR,
+  WEBDAV_PORT_ENV_VAR,
+} from "../shared/product.js";
 
 // createRequire is the stable way to load JSON in ESM without import assertions
 const require = createRequire(import.meta.url);
@@ -32,6 +37,18 @@ const version = pkg.version as string;
 
 const log = createLogger("daemon");
 
+function portFromEnv(envVar: string): number | undefined {
+  const raw = process.env[envVar];
+  if (raw === undefined || raw === "") {
+    return undefined;
+  }
+  const port = Number.parseInt(raw, 10);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`${envVar} must be an integer from 0 to 65535`);
+  }
+  return port;
+}
+
 /**
  * Loads or creates the control API token.
  *
@@ -40,7 +57,7 @@ const log = createLogger("daemon");
  * by using the exclusive-create flag ("wx") and falling back to a read on EEXIST.
  */
 function loadOrCreateToken(): string {
-  ensureStateDir();
+  ensureRuntimeDir();
   const tokenPath = controlTokenFile();
 
   // Happy path: file already exists.
@@ -124,10 +141,12 @@ function checkPidFile(): void {
 }
 
 function writePidFile(): void {
+  ensureRuntimeDir();
   writeFileSync(pidFile(), String(process.pid), { encoding: "utf-8" });
 }
 
 function writePortsFile(controlPort: number, webdavPort: number): void {
+  ensureRuntimeDir();
   writeFileSync(
     portsFile(),
     JSON.stringify({ control: controlPort, webdav: webdavPort }),
@@ -142,6 +161,7 @@ function cleanupFiles(): void {
 
 async function main(): Promise<void> {
   ensureStateDir();
+  ensureRuntimeDir();
   if (process.env[LOG_FORMAT_ENV_VAR] === undefined) {
     process.env[LOG_FORMAT_ENV_VAR] = "json";
   }
@@ -201,9 +221,12 @@ async function main(): Promise<void> {
   // Using a mutable box so onShutdown (captured at server-start time) can call
   // triggerShutdown with both handles after Promise.all resolves.
   const shutdownBox: { fn?: () => void } = {};
+  const webdavPort = portFromEnv(WEBDAV_PORT_ENV_VAR);
+  const controlPort = portFromEnv(CONTROL_PORT_ENV_VAR);
 
   const [webdav, control] = await Promise.all([
     startWebdavServer({
+      ...(webdavPort === undefined ? {} : { port: webdavPort }),
       projectRepo,
       stagingRepo,
       providerInstanceRepo,
@@ -211,6 +234,7 @@ async function main(): Promise<void> {
       cache,
     }),
     startControlServer({
+      ...(controlPort === undefined ? {} : { port: controlPort }),
       token,
       projectRepo,
       providerInstanceRepo,

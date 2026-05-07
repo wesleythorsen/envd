@@ -36,6 +36,7 @@
     "globals": "^17.5.0",
     "msw": "^2.14.3",
     "prettier": "^3.8.1",
+    "std-env": "^4.1.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.57.1",

@@ -44,12 +44,43 @@ describe("ProjectRepo", () => {
       expect(project.token).toMatch(/^[0-9a-f]{64}$/);
       expect(project.path).toBe(projectPath);
       expect(project.providerInstanceId).toBeNull();
+      expect(project.activeEnvironment).toBe("default");
       expect(project.format).toBe("dotenv");
       expect(project.formatConfig).toBe(
         JSON.stringify({ quote: "when-needed", sortKeys: "alphabetical" }),
       );
 
       expect(repo.get(project.id)).toEqual(project);
+      expect(repo.listEnvironments(project.id)).toEqual([
+        {
+          projectId: project.id,
+          name: "default",
+          providerEnvironment: "default",
+          createdAt: project.createdAt,
+          updatedAt: project.updatedAt,
+        },
+      ]);
+    });
+  });
+
+  it("creates and switches project environments", () => {
+    withRepos((repo, _providerInstanceRepo, projectPath) => {
+      mkdirSync(projectPath);
+      const project = repo.create({ path: projectPath });
+
+      const stage = repo.createEnvironment(project.id, "stage", "stg");
+      const updated = repo.setActiveEnvironment(project.id, "stage");
+
+      expect(stage).toMatchObject({
+        projectId: project.id,
+        name: "stage",
+        providerEnvironment: "stg",
+      });
+      expect(updated.activeEnvironment).toBe("stage");
+      expect(repo.listEnvironments(project.id).map((env) => env.name)).toEqual([
+        "default",
+        "stage",
+      ]);
     });
   });
 

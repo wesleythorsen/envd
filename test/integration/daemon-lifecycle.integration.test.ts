@@ -46,7 +46,12 @@ describe.skipIf(isWin32)("daemon lifecycle integration", () => {
       );
     }
     tmpHome = mkdtempSync(join(tmpdir(), "envd-lifecycle-test-"));
-    env = { ENVD_HOME: tmpHome };
+    env = {
+      ENVD_HOME: tmpHome,
+      ENVD_KEYCHAIN_BACKEND: "file",
+      ENVD_CONTROL_PORT: "0",
+      ENVD_WEBDAV_PORT: "0",
+    };
   });
 
   afterAll(() => {

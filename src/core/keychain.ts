@@ -16,6 +16,7 @@ import { createLogger, type Logger } from "../shared/logger.js";
 import { stateDir } from "../shared/paths.js";
 import { EnvdError } from "../shared/errors.js";
 import {
+  KEYCHAIN_BACKEND_ENV_VAR,
   KEYCHAIN_APPLICATION_NAME,
   SECRET_ENV_VAR,
 } from "../shared/product.js";
@@ -525,6 +526,10 @@ function parseStore(value: unknown): Map<string, string> {
 export function createKeychainAdapter(
   opts: KeychainOptions = {},
 ): KeychainAdapter {
+  if (process.env[KEYCHAIN_BACKEND_ENV_VAR] === "file") {
+    return new EncryptedFileKeychainAdapter(opts);
+  }
+
   const platform = opts.platform ?? process.platform;
   switch (platform) {
     case "darwin":

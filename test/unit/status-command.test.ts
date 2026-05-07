@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getStatus } from "../../src/cli/commands/status.js";
@@ -92,7 +98,15 @@ class FakeMountAdapter implements MountAdapter {
 
 function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), "envd-status-test-"));
-  return fn(dir).finally(() => {
+  const canonicalDir = realpathSync.native(dir);
+  const previousHome = process.env["ENVD_HOME"];
+  process.env["ENVD_HOME"] = canonicalDir;
+  return fn(canonicalDir).finally(() => {
+    if (previousHome === undefined) {
+      delete process.env["ENVD_HOME"];
+    } else {
+      process.env["ENVD_HOME"] = previousHome;
+    }
     rmSync(dir, { recursive: true, force: true });
   });
 }
@@ -131,6 +145,7 @@ describe("getStatus", () => {
         token: "token-1",
         path: dir,
         providerInstanceId: null,
+        activeEnvironment: "default",
         format: "dotenv",
         formatConfig: "{}",
         createdAt: 1,

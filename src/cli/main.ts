@@ -2,6 +2,7 @@
 import { createRequire } from "node:module";
 import { Command } from "commander";
 import { buildCommitCommand } from "./commands/commit.js";
+import { buildConfigCommand } from "./commands/config.js";
 import { buildDaemonCommand } from "./commands/daemon.js";
 import { buildDiffCommand } from "./commands/diff.js";
 import { buildInitCommand } from "./commands/init.js";
@@ -30,6 +31,7 @@ program
   });
 
 program.addCommand(buildCommitCommand());
+program.addCommand(buildConfigCommand());
 program.addCommand(buildDaemonCommand());
 program.addCommand(buildDiffCommand());
 program.addCommand(buildInitCommand());

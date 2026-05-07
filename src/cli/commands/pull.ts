@@ -1,15 +1,14 @@
 import { Command } from "commander";
 import { stdout as defaultStdout } from "node:process";
-import { resolve } from "node:path";
 import type {
   ControlClient,
   ProjectDiffResult,
 } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
-import { EnvdError } from "../../shared/errors.js";
 import { writeCliError } from "../error-output.js";
+import { ensureCliPreflight } from "../preflight.js";
 import { formatDiff } from "./diff.js";
-import { readProjectFile } from "../project-files.js";
+import { resolveProjectRegistrationOrThrow } from "../config-file.js";
 
 interface Writable {
   readonly isTTY?: boolean;
@@ -20,6 +19,7 @@ interface PullOptions {
   readonly force?: boolean;
   readonly dryRun?: boolean;
   readonly json?: boolean;
+  readonly noAutostart?: boolean;
 }
 
 interface PullCommandDeps {
@@ -53,16 +53,7 @@ function out(deps: PullCommandDeps, text: string): void {
 }
 
 function resolveProjectId(projectPath: string | undefined): string {
-  const projectDir = resolve(projectPath ?? process.cwd());
-  const projectFile = readProjectFile(projectDir);
-  if (projectFile === null) {
-    throw new EnvdError("project is not initialized", {
-      code: "not_initialized",
-      details: { path: projectDir },
-    });
-  }
-
-  return projectFile.projectId;
+  return resolveProjectRegistrationOrThrow(projectPath).id;
 }
 
 function hasDiff(diff: ProjectDiffResult): boolean {
@@ -128,9 +119,22 @@ export function buildPullCommand(deps: PullCommandDeps = {}): Command {
     .option("--force", "discard staged changes")
     .option("--dry-run", "show what would change without pulling")
     .option("--json", "JSON output")
+    .option("--no-autostart", "fail instead of starting daemon support")
     .action(async (path: string | undefined, opts: PullOptions) => {
       try {
-        const result = await pullProject(path, opts, deps);
+        const commandDeps =
+          deps.client !== undefined || deps.createClient !== undefined
+            ? deps
+            : {
+                ...deps,
+                client: (
+                  await ensureCliPreflight({
+                    action: "pull secrets",
+                    noAutostart: opts.noAutostart,
+                  })
+                ).client,
+              };
+        const result = await pullProject(path, opts, commandDeps);
         if (opts.json === true) {
           out(deps, JSON.stringify(result) + "\n");
           return;

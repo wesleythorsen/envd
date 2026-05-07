@@ -89,6 +89,25 @@ describe("StagingRepo", () => {
     });
   });
 
+  it("keeps staged desired state scoped by environment", () => {
+    withRepo((repo, projectId) => {
+      repo.setDesired(projectId, { API_KEY: "dev" }, "dev");
+      repo.setDesired(projectId, { API_KEY: "stage" }, "stage");
+
+      expect(repo.getDesired(projectId)).toBeUndefined();
+      expect(repo.getDesired(projectId, "dev")).toEqual({ API_KEY: "dev" });
+      expect(repo.getDesired(projectId, "stage")).toEqual({
+        API_KEY: "stage",
+      });
+
+      expect(repo.clear(projectId, "dev")).toBe(true);
+      expect(repo.getDesired(projectId, "dev")).toBeUndefined();
+      expect(repo.getDesired(projectId, "stage")).toEqual({
+        API_KEY: "stage",
+      });
+    });
+  });
+
   it("clears staged desired state", () => {
     withRepo((repo, projectId) => {
       repo.setDesired(projectId, {

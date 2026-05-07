@@ -1,5 +1,11 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildCommitCommand } from "../../src/cli/commands/commit.js";
@@ -15,13 +21,20 @@ function withTempProject(
   fn: (projectDir: string) => Promise<void>,
 ): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), "envd-commit-test-"));
-  const projectDir = join(dir, "project");
-  mkdirSync(projectDir);
+  mkdirSync(join(dir, "project"));
+  const projectDir = realpathSync.native(join(dir, "project"));
+  const previousHome = process.env["ENVD_HOME"];
+  process.env["ENVD_HOME"] = dir;
   writeFileSync(
     join(projectDir, ".envd.json"),
     JSON.stringify({ projectId: "project-1", version: 1 }),
   );
   return fn(projectDir).finally(() => {
+    if (previousHome === undefined) {
+      delete process.env["ENVD_HOME"];
+    } else {
+      process.env["ENVD_HOME"] = previousHome;
+    }
     rmSync(dir, { recursive: true, force: true });
   });
 }

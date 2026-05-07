@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { lstatSync, readlinkSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import type {
   ControlClient,
   ProjectDetail,
@@ -9,13 +9,20 @@ import type {
 import { createControlClient } from "../../ipc/control-client.js";
 import { EnvdError } from "../../shared/errors.js";
 import { writeCliError } from "../error-output.js";
+import { ensureCliPreflight } from "../preflight.js";
 import { createMountAdapter } from "../../mount/index.js";
 import { mountPath } from "../../shared/paths.js";
 import type { MountAdapter } from "../../mount/adapter.js";
-import { ENV_FILE, readProjectFile } from "../project-files.js";
+import { ENV_FILE } from "../project-files.js";
+import {
+  findProjectRegistration,
+  migrateLegacyProjectFile,
+  resolveProjectRoot,
+} from "../config-file.js";
 
 interface StatusOptions {
   readonly json?: boolean;
+  readonly noAutostart?: boolean;
 }
 
 interface StatusDeps {
@@ -164,8 +171,9 @@ async function projectStatus(
   projectDir: string,
   client: ControlClient | null,
 ): Promise<StatusResult["project"]> {
-  const projectFile = readProjectFile(projectDir);
-  if (projectFile === null) {
+  migrateLegacyProjectFile(projectDir);
+  const registration = findProjectRegistration(projectDir);
+  if (registration === null) {
     return null;
   }
 
@@ -176,8 +184,8 @@ async function projectStatus(
 
   if (client !== null) {
     try {
-      project = await client.getProject(projectFile.projectId);
-      details = await client.getProjectStatus(projectFile.projectId);
+      project = await client.getProject(registration.id);
+      details = await client.getProjectStatus(registration.id);
     } catch (err: unknown) {
       if (!(err instanceof EnvdError && err.code === "not_found")) {
         throw err;
@@ -187,7 +195,7 @@ async function projectStatus(
 
   return {
     path: projectDir,
-    projectId: projectFile.projectId,
+    projectId: registration.id,
     envPath,
     symlinkTarget,
     registered: project !== null,
@@ -212,7 +220,7 @@ async function projectStatus(
 }
 
 export async function getStatus(deps: StatusDeps = {}): Promise<StatusResult> {
-  const projectDir = resolve(deps.projectPath ?? process.cwd());
+  const projectDir = resolveProjectRoot(deps.projectPath);
   const client = resolveClient(deps);
   const [daemon, mount, project] = await Promise.all([
     daemonStatus(client),
@@ -300,9 +308,14 @@ export function buildStatusCommand(): Command {
   return new Command("status")
     .description("Show envd status")
     .option("--json", "JSON output")
+    .option("--no-autostart", "fail instead of starting daemon support")
     .action(async (opts: StatusOptions) => {
       try {
-        const status = await getStatus();
+        const preflight = await ensureCliPreflight({
+          action: "show status",
+          noAutostart: opts.noAutostart,
+        });
+        const status = await getStatus({ client: preflight.client });
         if (opts.json === true) {
           process.stdout.write(JSON.stringify(status) + "\n");
         } else {

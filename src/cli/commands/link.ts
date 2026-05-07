@@ -1,17 +1,18 @@
 import { Command } from "commander";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import type { ControlClient, ProjectDetail } from "../../ipc/control-client.js";
-import { createControlClient } from "../../ipc/control-client.js";
 import { EnvdError } from "../../shared/errors.js";
 import { writeCliError } from "../error-output.js";
+import { ensureCliPreflight } from "../preflight.js";
+import { ENV_FILE, ensureEnvSymlink } from "../project-files.js";
 import {
-  ENV_FILE,
-  ensureEnvSymlink,
-  readProjectFile,
-} from "../project-files.js";
+  resolveProjectRegistrationOrThrow,
+  resolveProjectRoot,
+} from "../config-file.js";
 
 interface LinkOptions {
   readonly json?: boolean;
+  readonly noAutostart?: boolean;
 }
 
 interface LinkDeps {
@@ -46,19 +47,10 @@ export async function linkProject(
   projectPath: string | undefined,
   deps: LinkDeps,
 ): Promise<LinkResult> {
-  const projectDir = resolve(projectPath ?? process.cwd());
-  const projectFile = readProjectFile(projectDir);
-  if (projectFile === null) {
-    throw new EnvdError("project is not initialized", {
-      code: "not_initialized",
-      details: { path: projectDir },
-    });
-  }
+  const projectDir = resolveProjectRoot(projectPath);
+  const registration = resolveProjectRegistrationOrThrow(projectPath);
 
-  const project = await getRegisteredProject(
-    deps.client,
-    projectFile.projectId,
-  );
+  const project = await getRegisteredProject(deps.client, registration.id);
   ensureEnvSymlink(projectDir, project.mountPath);
 
   return {
@@ -82,10 +74,16 @@ export function buildLinkCommand(): Command {
     .description("Re-create the .env symlink for an initialized project")
     .argument("[path]", "project directory")
     .option("--json", "JSON output")
+    .option("--no-autostart", "fail instead of starting daemon/mount support")
     .action(async (path: string | undefined, opts: LinkOptions) => {
       try {
+        const preflight = await ensureCliPreflight({
+          action: "link project",
+          ensureMount: true,
+          noAutostart: opts.noAutostart,
+        });
         const result = await linkProject(path, {
-          client: createControlClient(),
+          client: preflight.client,
         });
         printResult(result, opts.json);
       } catch (err: unknown) {

@@ -2,7 +2,7 @@ import { Command } from "commander";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { existsSync, readFileSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { join } from "node:path";
 import type {
   ControlClient,
   CreateProjectResult,
@@ -10,9 +10,9 @@ import type {
   ProviderMetadata,
   ProjectDetail,
 } from "../../ipc/control-client.js";
-import { createControlClient } from "../../ipc/control-client.js";
 import { EnvdError } from "../../shared/errors.js";
 import { writeCliError } from "../error-output.js";
+import { ensureCliPreflight } from "../preflight.js";
 import { createMountAdapter } from "../../mount/index.js";
 import { mountPath, portsFile } from "../../shared/paths.js";
 import type { MountAdapter } from "../../mount/adapter.js";
@@ -21,10 +21,14 @@ import {
   ENV_FILE,
   ensureEnvSymlink,
   ensureGitignore,
-  readProjectFile,
-  writeProjectFile,
-  type ProjectFile,
 } from "../project-files.js";
+import {
+  findProjectRegistration,
+  migrateLegacyProjectFile,
+  registerProject,
+  resolveProjectRoot,
+  type ProjectRegistration,
+} from "../config-file.js";
 
 interface InitOptions {
   readonly yes?: boolean;
@@ -34,6 +38,7 @@ interface InitOptions {
   readonly providerInstanceName?: string;
   readonly configJson?: string;
   readonly credentialsJson?: string;
+  readonly noAutostart?: boolean;
 }
 
 interface InitProjectDeps {
@@ -110,15 +115,15 @@ function printResult(result: InitResult, json: boolean | undefined): void {
 async function existingProjectResult(
   client: ControlClient,
   projectDir: string,
-  projectFile: ProjectFile,
+  registration: ProjectRegistration,
 ): Promise<InitResult> {
   let project: ProjectDetail;
   try {
-    project = await client.getProject(projectFile.projectId);
+    project = await client.getProject(registration.id);
   } catch (err: unknown) {
     if (err instanceof EnvdError && err.code === "not_found") {
       throw new EnvdError(
-        "this project is not registered on this machine; run envd init again after removing .envd.json",
+        "this project is not registered on this machine; run envd init again",
         { code: "not_initialized" },
       );
     }
@@ -145,7 +150,13 @@ async function newProjectResult(
     path: projectDir,
     providerInstanceId,
   });
-  writeProjectFile(projectDir, created.id);
+  registerProject({
+    id: created.id,
+    root: projectDir,
+    providerInstanceId,
+    activeEnvironment: "default",
+    environments: [{ name: "default", providerEnvironment: "default" }],
+  });
   ensureGitignore(projectDir);
   ensureEnvSymlink(projectDir, created.mountPath);
 
@@ -401,7 +412,7 @@ export async function initProject(
   options: InitOptions,
   deps: InitProjectDeps,
 ): Promise<InitResult> {
-  const projectDir = resolve(projectPath ?? process.cwd());
+  const projectDir = resolveProjectRoot(projectPath);
   if (!existsSync(projectDir)) {
     throw new EnvdError("project path does not exist", {
       code: "usage_error",
@@ -421,9 +432,10 @@ export async function initProject(
     await ensureMounted(adapter);
   }
 
-  const projectFile = readProjectFile(projectDir);
-  if (projectFile !== null) {
-    return existingProjectResult(deps.client, projectDir, projectFile);
+  migrateLegacyProjectFile(projectDir);
+  const registration = findProjectRegistration(projectDir);
+  if (registration !== null) {
+    return existingProjectResult(deps.client, projectDir, registration);
   }
 
   const providerInstanceId = await selectProviderInstanceId(options, deps);
@@ -447,10 +459,17 @@ export function buildInitCommand(): Command {
       "provider credentials JSON for auto-create",
     )
     .option("--json", "JSON output")
+    .option("--no-autostart", "fail instead of starting daemon/mount support")
     .action(async (path: string | undefined, opts: InitOptions) => {
       try {
+        const preflight = await ensureCliPreflight({
+          action: "initialize project",
+          ensureMount: true,
+          noAutostart: opts.noAutostart,
+        });
         const result = await initProject(path, opts, {
-          client: createControlClient(),
+          client: preflight.client,
+          ensureMount: false,
         });
         printResult(result, opts.json);
       } catch (err: unknown) {

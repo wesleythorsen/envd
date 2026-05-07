@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readlinkSync,
   rmSync,
   symlinkSync,
@@ -79,9 +80,16 @@ function withTempProject(
   fn: (projectDir: string) => Promise<void>,
 ): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), "envd-link-test-"));
-  const projectDir = join(dir, "project");
-  mkdirSync(projectDir);
+  mkdirSync(join(dir, "project"));
+  const projectDir = realpathSync.native(join(dir, "project"));
+  const previousHome = process.env["ENVD_HOME"];
+  process.env["ENVD_HOME"] = dir;
   return fn(projectDir).finally(() => {
+    if (previousHome === undefined) {
+      delete process.env["ENVD_HOME"];
+    } else {
+      process.env["ENVD_HOME"] = previousHome;
+    }
     rmSync(dir, { recursive: true, force: true });
   });
 }
@@ -99,6 +107,7 @@ function projectDetail(projectDir: string): ProjectDetail {
     token: "token-1",
     path: projectDir,
     providerInstanceId: null,
+    activeEnvironment: "default",
     format: "dotenv",
     formatConfig: "{}",
     createdAt: 1,

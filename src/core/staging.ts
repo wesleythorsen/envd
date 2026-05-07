@@ -26,6 +26,7 @@ interface StagingRow {
 
 interface LegacyStagingRow {
   project_id: string;
+  environment: string;
   desired: string;
 }
 
@@ -167,16 +168,19 @@ export class StagingRepo {
     this.codec = opts.codec;
   }
 
-  getDesired(projectId: string): StagedDesiredMap | undefined {
+  getDesired(
+    projectId: string,
+    environment = "default",
+  ): StagedDesiredMap | undefined {
     const row = this.db
-      .prepare<[string], StagingRow>(
+      .prepare<[string, string], StagingRow>(
         `
         SELECT desired, desired_version
         FROM staging
-        WHERE project_id = ?
+        WHERE project_id = ? AND environment = ?
       `,
       )
-      .get(projectId);
+      .get(projectId, environment);
 
     if (row === undefined) {
       return undefined;
@@ -195,21 +199,25 @@ export class StagingRepo {
     return this.codec.decode(row.desired);
   }
 
-  setDesired(projectId: string, map: StagedDesiredMap): void {
+  setDesired(
+    projectId: string,
+    map: StagedDesiredMap,
+    environment = "default",
+  ): void {
     const desired = this.codec?.encode(map) ?? serializeDesired(map);
     const desiredVersion = this.codec?.version ?? PLAIN_DESIRED_VERSION;
     this.db
       .prepare(
         `
-        INSERT INTO staging (project_id, updated_at, desired, desired_version)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(project_id) DO UPDATE SET
+        INSERT INTO staging (project_id, environment, updated_at, desired, desired_version)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(project_id, environment) DO UPDATE SET
           updated_at = excluded.updated_at,
           desired = excluded.desired,
           desired_version = excluded.desired_version
       `,
       )
-      .run(projectId, this.now(), desired, desiredVersion);
+      .run(projectId, environment, this.now(), desired, desiredVersion);
   }
 
   hasEncryptedRows(): boolean {
@@ -233,7 +241,7 @@ export class StagingRepo {
     const rows = this.db
       .prepare<[], LegacyStagingRow>(
         `
-        SELECT project_id, desired
+        SELECT project_id, environment, desired
         FROM staging
         WHERE desired_version = 0
       `,
@@ -249,7 +257,7 @@ export class StagingRepo {
           `
             UPDATE staging
             SET desired = ?, desired_version = ?
-            WHERE project_id = ?
+            WHERE project_id = ? AND environment = ?
           `,
         );
         for (const row of legacyRows) {
@@ -257,6 +265,7 @@ export class StagingRepo {
             this.codec?.encode(parseDesired(row.desired)),
             this.codec?.version,
             row.project_id,
+            row.environment,
           );
         }
       },
@@ -265,10 +274,10 @@ export class StagingRepo {
     return rows.length;
   }
 
-  clear(projectId: string): boolean {
+  clear(projectId: string, environment = "default"): boolean {
     const result = this.db
-      .prepare("DELETE FROM staging WHERE project_id = ?")
-      .run(projectId);
+      .prepare("DELETE FROM staging WHERE project_id = ? AND environment = ?")
+      .run(projectId, environment);
     return result.changes > 0;
   }
 }

@@ -315,6 +315,60 @@ describe("/v1/projects", () => {
     const got = (await getRes.body.json()) as Record<string, unknown>;
     expect(got["id"]).toBe(projectId);
     expect(got["path"]).toBe(projectPath);
+    expect(got["activeEnvironment"]).toBe("default");
+
+    const environmentsRes = await request(
+      `${projectBase}/v1/projects/${projectId}/environments`,
+      {
+        headers: { Authorization: `Bearer ${projectToken}` },
+      },
+    );
+    expect(environmentsRes.statusCode).toBe(200);
+    const environments = (await environmentsRes.body.json()) as {
+      environments?: readonly Record<string, unknown>[];
+    };
+    expect(environments.environments).toMatchObject([
+      {
+        projectId,
+        name: "default",
+        providerEnvironment: "default",
+      },
+    ]);
+
+    const createEnvironmentRes = await request(
+      `${projectBase}/v1/projects/${projectId}/environments`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${projectToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: "stage", providerEnvironment: "stg" }),
+      },
+    );
+    expect(createEnvironmentRes.statusCode).toBe(201);
+    const createdEnvironment =
+      (await createEnvironmentRes.body.json()) as Record<string, unknown>;
+    expect(createdEnvironment).toMatchObject({
+      projectId,
+      name: "stage",
+      providerEnvironment: "stg",
+    });
+
+    const activeRes = await request(
+      `${projectBase}/v1/projects/${projectId}/active-environment`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${projectToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name: "stage" }),
+      },
+    );
+    expect(activeRes.statusCode).toBe(200);
+    const active = (await activeRes.body.json()) as Record<string, unknown>;
+    expect(active["activeEnvironment"]).toBe("stage");
 
     const deleteRes = await request(`${projectBase}/v1/projects/${projectId}`, {
       method: "DELETE",
@@ -612,8 +666,8 @@ describe("POST /v1/projects/:id/pull", () => {
     expect(await res.body.json()).toEqual({ snapshotFetchedAt: 123_456 });
     expect(stagingRepo.getDesired(forceProjectId)).toBeUndefined();
     expect(cacheEvents).toEqual([
-      `invalidate:${forceProjectId}`,
-      `get:${forceProjectId}`,
+      `invalidate:${forceProjectId}\0default`,
+      `get:${forceProjectId}\0default`,
     ]);
     expect(fetchedValues).toEqual([{ REMOTE: "after-force" }]);
   });
@@ -755,7 +809,7 @@ describe("POST /v1/projects/:id/commit", () => {
   });
 
   it("applies staged changes on a happy path commit", async () => {
-    cache.seed(projectId, { SHARED: "base", KEEP: "same" }, 111);
+    cache.seed(`${projectId}\0default`, { SHARED: "base", KEEP: "same" }, 111);
     remoteState = { SHARED: "base", KEEP: "same" };
     stagingRepo.setDesired(projectId, {
       SHARED: "local",
@@ -793,15 +847,19 @@ describe("POST /v1/projects/:id/commit", () => {
     });
     expect(stagingRepo.getDesired(projectId)).toBeUndefined();
     expect(cacheEvents).toEqual([
-      `get:${projectId}`,
-      `invalidate:${projectId}`,
-      `get:${projectId}`,
-      `invalidate:${projectId}`,
+      `get:${projectId}\0default`,
+      `invalidate:${projectId}\0default`,
+      `get:${projectId}\0default`,
+      `invalidate:${projectId}\0default`,
     ]);
   });
 
   it("returns 409 with structured conflicts for abort strategy", async () => {
-    cache.seed(projectId, { SHARED: "base", ONLY_REMOTE: "base" }, 111);
+    cache.seed(
+      `${projectId}\0default`,
+      { SHARED: "base", ONLY_REMOTE: "base" },
+      111,
+    );
     remoteState = { SHARED: "remote", ONLY_REMOTE: "base" };
     stagingRepo.setDesired(projectId, {
       SHARED: "local",
@@ -837,7 +895,7 @@ describe("POST /v1/projects/:id/commit", () => {
   });
 
   it("drops conflicting local edits with strategy=theirs and commits the rest", async () => {
-    cache.seed(projectId, { SHARED: "base", KEEP: "same" }, 111);
+    cache.seed(`${projectId}\0default`, { SHARED: "base", KEEP: "same" }, 111);
     remoteState = { SHARED: "remote", KEEP: "same" };
     stagingRepo.setDesired(projectId, {
       SHARED: "local",
@@ -876,7 +934,7 @@ describe("POST /v1/projects/:id/commit", () => {
   });
 
   it("keeps conflicting local edits with strategy=ours", async () => {
-    cache.seed(projectId, { SHARED: "base", KEEP: "same" }, 111);
+    cache.seed(`${projectId}\0default`, { SHARED: "base", KEEP: "same" }, 111);
     remoteState = { SHARED: "remote", KEEP: "same" };
     stagingRepo.setDesired(projectId, {
       SHARED: "local",
@@ -909,7 +967,7 @@ describe("POST /v1/projects/:id/commit", () => {
   });
 
   it("surfaces provider push failures", async () => {
-    cache.seed(projectId, { VALUE: "base" }, 111);
+    cache.seed(`${projectId}\0default`, { VALUE: "base" }, 111);
     remoteState = { VALUE: "base" };
     pushMode = "throw";
     stagingRepo.setDesired(projectId, { VALUE: "local" });
@@ -931,7 +989,7 @@ describe("POST /v1/projects/:id/commit", () => {
   });
 
   it("returns 409 when provider.push reports a conflict", async () => {
-    cache.seed(projectId, { VALUE: "base" }, 111);
+    cache.seed(`${projectId}\0default`, { VALUE: "base" }, 111);
     remoteState = { VALUE: "base" };
     pushMode = "conflict";
     stagingRepo.setDesired(projectId, { VALUE: "local" });

@@ -143,6 +143,11 @@ describe("commit command integration", () => {
           return;
         }
 
+        if (req.method === "GET" && req.url === "/v1/health") {
+          writeJson(res, 200, { ok: true, version: "test", uptimeSec: 1 });
+          return;
+        }
+
         if (req.method === "GET" && req.url === "/v1/projects/project-1/diff") {
           writeJson(res, 200, {
             keys: { added: ["ADDED"], modified: ["SHARED"], deleted: [] },

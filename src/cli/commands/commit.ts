@@ -5,7 +5,6 @@ import {
   stdout as defaultStdout,
   stderr as defaultStderr,
 } from "node:process";
-import { resolve } from "node:path";
 import type {
   ControlClient,
   ProjectCommitResult,
@@ -15,8 +14,9 @@ import type {
 import { createControlClient } from "../../ipc/control-client.js";
 import { EnvdError } from "../../shared/errors.js";
 import { errorHintForCode, writeCliError } from "../error-output.js";
+import { ensureCliPreflight } from "../preflight.js";
 import { formatDiff } from "./diff.js";
-import { readProjectFile } from "../project-files.js";
+import { resolveProjectRegistrationOrThrow } from "../config-file.js";
 
 interface Writable {
   readonly isTTY?: boolean;
@@ -31,6 +31,7 @@ interface CommitOptions {
   readonly ours?: boolean;
   readonly yes?: boolean;
   readonly json?: boolean;
+  readonly noAutostart?: boolean;
 }
 
 interface CommitCommandDeps {
@@ -64,16 +65,7 @@ function err(deps: CommitCommandDeps, text: string): void {
 }
 
 function resolveProjectId(projectPath: string | undefined): string {
-  const projectDir = resolve(projectPath ?? process.cwd());
-  const projectFile = readProjectFile(projectDir);
-  if (projectFile === null) {
-    throw new EnvdError("project is not initialized", {
-      code: "not_initialized",
-      details: { path: projectDir },
-    });
-  }
-
-  return projectFile.projectId;
+  return resolveProjectRegistrationOrThrow(projectPath).id;
 }
 
 function defaultConfirm(question: string): Promise<boolean> {
@@ -225,9 +217,22 @@ export function buildCommitCommand(deps: CommitCommandDeps = {}): Command {
     .option("--ours", "resolve conflicts by keeping local staged values")
     .option("--yes", "skip the staged-change confirmation prompt")
     .option("--json", "JSON output")
+    .option("--no-autostart", "fail instead of starting daemon support")
     .action(async (path: string | undefined, opts: CommitOptions) => {
       try {
-        const result = await commitProject(path, opts, deps);
+        const commandDeps =
+          deps.client !== undefined || deps.createClient !== undefined
+            ? deps
+            : {
+                ...deps,
+                client: (
+                  await ensureCliPreflight({
+                    action: "commit changes",
+                    noAutostart: opts.noAutostart,
+                  })
+                ).client,
+              };
+        const result = await commitProject(path, opts, commandDeps);
         if (opts.json === true) {
           out(deps, JSON.stringify(result) + "\n");
           return;

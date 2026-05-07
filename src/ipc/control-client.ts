@@ -19,6 +19,17 @@ export interface ControlClient {
   }>;
   createProject(input: CreateProjectInput): Promise<CreateProjectResult>;
   getProject(id: string): Promise<ProjectDetail>;
+  listProjectEnvironments(
+    id: string,
+  ): Promise<readonly ProjectEnvironmentDetail[]>;
+  createProjectEnvironment(
+    id: string,
+    input: CreateProjectEnvironmentInput,
+  ): Promise<ProjectEnvironmentDetail>;
+  setProjectActiveEnvironment(
+    id: string,
+    name: string,
+  ): Promise<ProjectDetail>;
   getProjectStatus(id: string): Promise<ProjectStatusDetail>;
   getProjectDiff(
     id: string,
@@ -67,11 +78,25 @@ export interface ProjectDetail {
   readonly token: string;
   readonly path: string;
   readonly providerInstanceId: string | null;
+  readonly activeEnvironment: string;
   readonly format: string;
   readonly formatConfig: string;
   readonly createdAt: number;
   readonly updatedAt: number;
   readonly mountPath: string;
+}
+
+export interface ProjectEnvironmentDetail {
+  readonly projectId: string;
+  readonly name: string;
+  readonly providerEnvironment: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export interface CreateProjectEnvironmentInput {
+  readonly name: string;
+  readonly providerEnvironment?: string;
 }
 
 export interface ProjectStatusDetail {
@@ -671,6 +696,38 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
         base,
         token,
         `/v1/projects/${encodeURIComponent(id)}`,
+        timeoutMs,
+      );
+    },
+
+    async listProjectEnvironments(id) {
+      const response = await apiGet<{
+        environments: readonly ProjectEnvironmentDetail[];
+      }>(
+        base,
+        token,
+        `/v1/projects/${encodeURIComponent(id)}/environments`,
+        timeoutMs,
+      );
+      return response.environments;
+    },
+
+    async createProjectEnvironment(id, input) {
+      return apiPostJson<ProjectEnvironmentDetail>(
+        base,
+        token,
+        `/v1/projects/${encodeURIComponent(id)}/environments`,
+        input,
+        timeoutMs,
+      );
+    },
+
+    async setProjectActiveEnvironment(id, name) {
+      return apiPostJson<ProjectDetail>(
+        base,
+        token,
+        `/v1/projects/${encodeURIComponent(id)}/active-environment`,
+        { name },
         timeoutMs,
       );
     },

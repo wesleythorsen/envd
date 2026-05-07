@@ -1,15 +1,14 @@
 import { Command } from "commander";
 import { stdout as defaultStdout } from "node:process";
-import { resolve } from "node:path";
 import type {
   ControlClient,
   ProjectDiffResult,
 } from "../../ipc/control-client.js";
 import { createControlClient } from "../../ipc/control-client.js";
-import { EnvdError } from "../../shared/errors.js";
 import { colorize } from "../color.js";
 import { writeCliError } from "../error-output.js";
-import { readProjectFile } from "../project-files.js";
+import { ensureCliPreflight } from "../preflight.js";
+import { resolveProjectRegistrationOrThrow } from "../config-file.js";
 
 interface Writable {
   readonly isTTY?: boolean;
@@ -19,6 +18,7 @@ interface Writable {
 interface DiffOptions {
   readonly values?: boolean;
   readonly json?: boolean;
+  readonly noAutostart?: boolean;
 }
 
 interface DiffCommandDeps {
@@ -44,16 +44,9 @@ export async function diffProject(
   options: DiffOptions,
   deps: DiffCommandDeps,
 ): Promise<ProjectDiffResult> {
-  const projectDir = resolve(projectPath ?? process.cwd());
-  const projectFile = readProjectFile(projectDir);
-  if (projectFile === null) {
-    throw new EnvdError("project is not initialized", {
-      code: "not_initialized",
-      details: { path: projectDir },
-    });
-  }
+  const registration = resolveProjectRegistrationOrThrow(projectPath);
 
-  return resolveClient(deps).getProjectDiff(projectFile.projectId, {
+  return resolveClient(deps).getProjectDiff(registration.id, {
     values: options.values === true,
   });
 }
@@ -117,9 +110,22 @@ export function buildDiffCommand(deps: DiffCommandDeps = {}): Command {
     .argument("[path]", "project directory")
     .option("--values", "include secret values")
     .option("--json", "JSON output")
+    .option("--no-autostart", "fail instead of starting daemon support")
     .action(async (path: string | undefined, opts: DiffOptions) => {
       try {
-        const diff = await diffProject(path, opts, deps);
+        const commandDeps =
+          deps.client !== undefined || deps.createClient !== undefined
+            ? deps
+            : {
+                ...deps,
+                client: (
+                  await ensureCliPreflight({
+                    action: "show diff",
+                    noAutostart: opts.noAutostart,
+                  })
+                ).client,
+              };
+        const diff = await diffProject(path, opts, commandDeps);
         if (opts.json === true) {
           out(deps, JSON.stringify(diff) + "\n");
           return;

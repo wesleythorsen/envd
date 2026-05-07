@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -7,6 +7,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // Since module caching means stateDir() reads process.env at call time (not
 // module load time), we can simply set the env var before each call.
 import {
+  cacheDir,
+  configDir,
+  configFile,
   controlTokenFile,
   daemonLogFile,
   ensureStateDir,
@@ -14,46 +17,100 @@ import {
   mountPath,
   pidFile,
   portsFile,
+  runtimeDir,
   stateDir,
 } from "../../src/shared/paths.js";
 
-describe("stateDir()", () => {
-  let original: string | undefined;
+const ENV_KEYS = [
+  "ENVD_HOME",
+  "ENVD_MOUNT_PATH",
+  "XDG_CONFIG_HOME",
+  "XDG_STATE_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_RUNTIME_DIR",
+] as const;
+
+type EnvKey = (typeof ENV_KEYS)[number];
+
+function snapshotEnv(): Partial<Record<EnvKey, string>> {
+  const snapshot: Partial<Record<EnvKey, string>> = {};
+  for (const key of ENV_KEYS) {
+    const value = process.env[key];
+    if (value !== undefined) {
+      snapshot[key] = value;
+    }
+  }
+  return snapshot;
+}
+
+function restoreEnv(snapshot: Partial<Record<EnvKey, string>>): void {
+  for (const key of ENV_KEYS) {
+    const value = snapshot[key];
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+}
+
+function clearEnv(): void {
+  for (const key of ENV_KEYS) {
+    delete process.env[key];
+  }
+}
+
+describe("envd directory resolution", () => {
+  let original: Partial<Record<EnvKey, string>>;
 
   beforeEach(() => {
-    original = process.env["ENVD_HOME"];
+    original = snapshotEnv();
+    clearEnv();
   });
 
   afterEach(() => {
-    if (original === undefined) {
-      delete process.env["ENVD_HOME"];
-    } else {
-      process.env["ENVD_HOME"] = original;
-    }
+    restoreEnv(original);
   });
 
-  it("returns a non-empty string by default", () => {
-    delete process.env["ENVD_HOME"];
-    const dir = stateDir();
-    expect(typeof dir).toBe("string");
-    expect(dir.length).toBeGreaterThan(0);
+  it("uses XDG-style defaults", () => {
+    expect(configDir()).toBe(join(homedir(), ".config/envd"));
+    expect(configFile()).toBe(join(homedir(), ".config/envd/config.toml"));
+    expect(stateDir()).toBe(join(homedir(), ".local/state/envd"));
+    expect(cacheDir()).toBe(join(homedir(), ".cache/envd"));
+    expect(runtimeDir()).toBe(join(homedir(), ".local/state/envd/run"));
   });
 
-  it("defaults to ~/.envd/", () => {
-    delete process.env["ENVD_HOME"];
-    const dir = stateDir();
-    expect(dir).toMatch(/\.envd$/);
+  it("honors XDG overrides", () => {
+    process.env["XDG_CONFIG_HOME"] = "/xdg/config";
+    process.env["XDG_STATE_HOME"] = "/xdg/state";
+    process.env["XDG_CACHE_HOME"] = "/xdg/cache";
+    process.env["XDG_RUNTIME_DIR"] = "/xdg/runtime";
+
+    expect(configDir()).toBe("/xdg/config/envd");
+    expect(configFile()).toBe("/xdg/config/envd/config.toml");
+    expect(stateDir()).toBe("/xdg/state/envd");
+    expect(cacheDir()).toBe("/xdg/cache/envd");
+    expect(runtimeDir()).toBe("/xdg/runtime/envd");
   });
 
   it("honors ENVD_HOME override", () => {
     process.env["ENVD_HOME"] = "/tmp/custom-envd";
+    process.env["XDG_CONFIG_HOME"] = "/xdg/config";
+    process.env["XDG_STATE_HOME"] = "/xdg/state";
+    process.env["XDG_CACHE_HOME"] = "/xdg/cache";
+    process.env["XDG_RUNTIME_DIR"] = "/xdg/runtime";
+
+    expect(configDir()).toBe("/tmp/custom-envd");
+    expect(configFile()).toBe("/tmp/custom-envd/config.toml");
     expect(stateDir()).toBe("/tmp/custom-envd");
+    expect(cacheDir()).toBe("/tmp/custom-envd");
+    expect(runtimeDir()).toBe("/tmp/custom-envd");
   });
 
   it("ignores empty ENVD_HOME and falls back to default", () => {
     process.env["ENVD_HOME"] = "";
     const dir = stateDir();
-    expect(dir).toMatch(/\.envd$/);
+    expect(dir).toMatch(/\.local\/state\/envd$/);
   });
 });
 
@@ -67,15 +124,15 @@ describe("derived path functions", () => {
   });
 
   it("pidFile() is inside stateDir()", () => {
-    expect(pidFile()).toBe(join(stateDir(), "envdd.pid"));
+    expect(pidFile()).toBe(join(runtimeDir(), "envdd.pid"));
   });
 
   it("portsFile() is inside stateDir()", () => {
-    expect(portsFile()).toBe(join(stateDir(), "ports.json"));
+    expect(portsFile()).toBe(join(runtimeDir(), "ports.json"));
   });
 
   it("controlTokenFile() is inside stateDir()", () => {
-    expect(controlTokenFile()).toBe(join(stateDir(), "control-token"));
+    expect(controlTokenFile()).toBe(join(runtimeDir(), "control-token"));
   });
 
   it("logDir() is inside stateDir()", () => {

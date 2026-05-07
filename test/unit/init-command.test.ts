@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   unlinkSync,
 } from "node:fs";
@@ -20,6 +22,7 @@ import type {
   ProjectDetail,
 } from "../../src/ipc/control-client.js";
 import { EnvdError } from "../../src/shared/errors.js";
+import { readEnvdConfig } from "../../src/cli/config-file.js";
 
 const localFileMetadata: ProviderMetadata = {
   name: "local-file",
@@ -73,6 +76,7 @@ class FakeControlClient implements ControlClient {
       token: "token-1",
       path: input.path,
       providerInstanceId: input.providerInstanceId ?? null,
+      activeEnvironment: "default",
       format: "dotenv",
       formatConfig: "{}",
       createdAt: 1,
@@ -166,19 +170,22 @@ function withTempProject(
   fn: (projectDir: string) => Promise<void>,
 ): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), "envd-init-test-"));
-  const projectDir = join(dir, "project");
-  mkdirSync(projectDir);
+  mkdirSync(join(dir, "project"));
+  const projectDir = realpathSync.native(join(dir, "project"));
+  const previousHome = process.env["ENVD_HOME"];
+  process.env["ENVD_HOME"] = dir;
   return fn(projectDir).finally(() => {
+    if (previousHome === undefined) {
+      delete process.env["ENVD_HOME"];
+    } else {
+      process.env["ENVD_HOME"] = previousHome;
+    }
     rmSync(dir, { recursive: true, force: true });
   });
 }
 
-function readJson(path: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
-}
-
 describe("initProject", () => {
-  it("registers a project, writes metadata, creates symlink, and updates gitignore", async () => {
+  it("registers a project, writes TOML metadata, creates symlink, and updates gitignore", async () => {
     await withTempProject(async (projectDir) => {
       const client = new FakeControlClient(
         "/Volumes/envd/p/project-1.token-1/.env",
@@ -197,10 +204,16 @@ describe("initProject", () => {
         path: projectDir,
         providerInstanceId: "instance-1",
       });
-      expect(readJson(join(projectDir, ".envd.json"))).toEqual({
-        projectId: "project-1",
-        version: 1,
-      });
+      expect(existsSync(join(projectDir, ".envd.json"))).toBe(false);
+      expect(readEnvdConfig().projects).toEqual([
+        {
+          id: "project-1",
+          root: projectDir,
+          providerInstanceId: "instance-1",
+          activeEnvironment: "default",
+          environments: [{ name: "default", providerEnvironment: "default" }],
+        },
+      ]);
       expect(readlinkSync(join(projectDir, ".env"))).toBe(
         "/Volumes/envd/p/project-1.token-1/.env",
       );
@@ -236,7 +249,7 @@ describe("initProject", () => {
     });
   });
 
-  it("does not store the project token in .envd.json", async () => {
+  it("does not store the project token in the TOML registry", async () => {
     await withTempProject(async (projectDir) => {
       const client = new FakeControlClient(
         "/Volumes/envd/p/project-1.token-1/.env",
@@ -248,8 +261,10 @@ describe("initProject", () => {
         { client, ensureMount: false },
       );
 
-      const projectFile = readFileSync(join(projectDir, ".envd.json"), "utf-8");
-      expect(projectFile).not.toContain("token-1");
+      expect(existsSync(join(projectDir, ".envd.json"))).toBe(false);
+      expect(
+        readFileSync(join(projectDir, "..", "config.toml"), "utf-8"),
+      ).not.toContain("token-1");
     });
   });
 

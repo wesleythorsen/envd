@@ -214,7 +214,7 @@ async function readProviderSnapshot(
     const config = parseProviderConfig(record);
     const ttlMs = readCacheTtlMs(config);
     return await runtime.cache.get(
-      project.id,
+      scopedProjectKey(project),
       () => fetchFromProvider(provider, keychain, record, config),
       { ttlMs },
     );
@@ -235,13 +235,20 @@ function stagedDesiredToSecretMap(desired: StagedDesiredMap): SecretMap {
   return map;
 }
 
+function scopedProjectKey(project: Project): string {
+  return `${project.id}\0${project.activeEnvironment}`;
+}
+
 async function renderProjectFile(
   runtime: WebdavRuntime,
   project: Project,
 ): Promise<RenderedProjectFile> {
   const format = parseProjectFormat(project);
   const snapshot = await readProviderSnapshot(runtime, project);
-  const desired = runtime.stagingRepo?.getDesired(project.id);
+  const desired = runtime.stagingRepo?.getDesired(
+    project.id,
+    project.activeEnvironment,
+  );
   const renderedMap =
     desired === undefined ? snapshot.value : stagedDesiredToSecretMap(desired);
   const bytes = Buffer.from(secretsKind.render(renderedMap, format));
@@ -534,7 +541,7 @@ async function handlePut(
 
   const bytes = await readRequestBody(req);
   const desired = secretsKind.parse(bytes, parseProjectFormat(project));
-  stagingRepo.setDesired(project.id, desired);
+  stagingRepo.setDesired(project.id, desired, project.activeEnvironment);
   res.writeHead(204, { "Content-Length": "0" });
   res.end();
 }

@@ -135,13 +135,39 @@ describe("project APIs happy path", () => {
     const detail = await projectClient.getProject(created.id);
     expect(detail.id).toBe(created.id);
     expect(detail.path).toBe(projectPath);
+    expect(detail.activeEnvironment).toBe("default");
     expect(detail.mountPath).toBe(created.mountPath);
 
-    stagingRepo.setDesired(created.id, {
-      ADDED: "fresh",
-      BASE: "changed",
-      REMOVED: null,
+    await expect(projectClient.listProjectEnvironments(created.id)).resolves.toMatchObject([
+      {
+        projectId: created.id,
+        name: "default",
+        providerEnvironment: "default",
+      },
+    ]);
+    await expect(
+      projectClient.createProjectEnvironment(created.id, {
+        name: "stage",
+        providerEnvironment: "stg",
+      }),
+    ).resolves.toMatchObject({
+      projectId: created.id,
+      name: "stage",
+      providerEnvironment: "stg",
     });
+    await expect(
+      projectClient.setProjectActiveEnvironment(created.id, "stage"),
+    ).resolves.toMatchObject({ id: created.id, activeEnvironment: "stage" });
+
+    stagingRepo.setDesired(
+      created.id,
+      {
+        ADDED: "fresh",
+        BASE: "changed",
+        REMOVED: null,
+      },
+      "stage",
+    );
     writeFileSync(
       providerFile,
       JSON.stringify({ BASE: "remote", REMOVED: "present" }),
