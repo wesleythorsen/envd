@@ -172,8 +172,10 @@ describe("getStatus", () => {
       expect(status.project).toEqual({
         path: dir,
         projectId: "project-1",
+        activeEnvironment: "default",
         envPath: join(dir, ".env"),
         symlinkTarget: envTarget,
+        linkState: "linked",
         registered: true,
         mountPath: envTarget,
         format: "dotenv",
@@ -186,7 +188,133 @@ describe("getStatus", () => {
         },
         staging: { added: 1, modified: 2, deleted: 3, total: 6 },
         lastFetchTime: "2026-01-02T03:04:05.000Z",
+        nextAction: "review with envd diff, then envd commit",
       });
+    });
+  });
+
+  it("reports clean projects with no next action", async () => {
+    await withTempDir(async (dir) => {
+      const envTarget = "/tmp/envd-mount/p/project-1.token-1/.env";
+      writeFileSync(
+        join(dir, ".envd.json"),
+        JSON.stringify({ projectId: "project-1", version: 1 }),
+      );
+      symlinkSync(envTarget, join(dir, ".env"));
+
+      const status = await getStatus({
+        projectPath: dir,
+        client: new FakeControlClient(
+          {
+            id: "project-1",
+            token: "token-1",
+            path: dir,
+            providerInstanceId: "provider-1",
+            activeEnvironment: "default",
+            format: "dotenv",
+            formatConfig: "{}",
+            createdAt: 1,
+            updatedAt: 1,
+            mountPath: envTarget,
+          },
+          {
+            providerInstanceId: "provider-1",
+            provider: "local-file",
+            providerInstanceName: "Local secrets",
+            providerHealthy: true,
+            providerError: null,
+            lastFetchTime: null,
+            staging: { added: 0, modified: 0, deleted: 0, total: 0 },
+          },
+        ),
+        mountAdapter: new FakeMountAdapter(true),
+      });
+
+      expect(status.project?.nextAction).toBe("no action needed");
+      expect(status.project?.linkState).toBe("linked");
+    });
+  });
+
+  it("prioritizes provider failures in the next action", async () => {
+    await withTempDir(async (dir) => {
+      const envTarget = "/tmp/envd-mount/p/project-1.token-1/.env";
+      writeFileSync(
+        join(dir, ".envd.json"),
+        JSON.stringify({ projectId: "project-1", version: 1 }),
+      );
+      symlinkSync(envTarget, join(dir, ".env"));
+
+      const status = await getStatus({
+        projectPath: dir,
+        client: new FakeControlClient(
+          {
+            id: "project-1",
+            token: "token-1",
+            path: dir,
+            providerInstanceId: "provider-1",
+            activeEnvironment: "default",
+            format: "dotenv",
+            formatConfig: "{}",
+            createdAt: 1,
+            updatedAt: 1,
+            mountPath: envTarget,
+          },
+          {
+            providerInstanceId: "provider-1",
+            provider: "local-file",
+            providerInstanceName: "Local secrets",
+            providerHealthy: false,
+            providerError: "provider down",
+            lastFetchTime: null,
+            staging: { added: 0, modified: 0, deleted: 0, total: 0 },
+          },
+        ),
+        mountAdapter: new FakeMountAdapter(true),
+      });
+
+      expect(status.project?.provider?.healthy).toBe(false);
+      expect(status.project?.nextAction).toBe("run envd provider test");
+    });
+  });
+
+  it("reports an unlinked project and suggests relinking", async () => {
+    await withTempDir(async (dir) => {
+      const envTarget = "/tmp/envd-mount/p/project-1.token-1/.env";
+      writeFileSync(
+        join(dir, ".envd.json"),
+        JSON.stringify({ projectId: "project-1", version: 1 }),
+      );
+
+      const status = await getStatus({
+        projectPath: dir,
+        client: new FakeControlClient(
+          {
+            id: "project-1",
+            token: "token-1",
+            path: dir,
+            providerInstanceId: "provider-1",
+            activeEnvironment: "default",
+            format: "dotenv",
+            formatConfig: "{}",
+            createdAt: 1,
+            updatedAt: 1,
+            mountPath: envTarget,
+          },
+          {
+            providerInstanceId: "provider-1",
+            provider: "local-file",
+            providerInstanceName: "Local secrets",
+            providerHealthy: true,
+            providerError: null,
+            lastFetchTime: null,
+            staging: { added: 0, modified: 0, deleted: 0, total: 0 },
+          },
+        ),
+        mountAdapter: new FakeMountAdapter(true),
+      });
+
+      expect(status.project?.linkState).toBe("missing");
+      expect(status.project?.nextAction).toBe("run envd link");
     });
   });
 

@@ -48,8 +48,10 @@ export interface StatusResult {
   readonly project: {
     readonly path: string;
     readonly projectId: string;
+    readonly activeEnvironment: string;
     readonly envPath: string;
     readonly symlinkTarget: string | null;
+    readonly linkState: "linked" | "stale" | "missing";
     readonly registered: boolean;
     readonly mountPath: string | null;
     readonly format: string | null;
@@ -67,6 +69,7 @@ export interface StatusResult {
       readonly total: number;
     } | null;
     readonly lastFetchTime: string | null;
+    readonly nextAction: string;
   } | null;
 }
 
@@ -192,14 +195,34 @@ async function projectStatus(
       }
     }
   }
+  const mountPathValue = project?.mountPath ?? null;
+  const linkState =
+    symlinkTarget === null
+      ? "missing"
+      : mountPathValue !== null && symlinkTarget === mountPathValue
+        ? "linked"
+        : "stale";
+  const staging = details?.staging ?? null;
+  const providerHealthy = details?.providerHealthy ?? null;
+  const nextAction =
+    providerHealthy === false
+      ? "run envd provider test"
+      : linkState !== "linked"
+        ? "run envd link"
+        : staging !== null && staging.total > 0
+          ? "review with envd diff, then envd commit"
+          : "no action needed";
 
   return {
     path: projectDir,
     projectId: registration.id,
+    activeEnvironment:
+      project?.activeEnvironment ?? registration.activeEnvironment,
     envPath,
     symlinkTarget,
+    linkState,
     registered: project !== null,
-    mountPath: project?.mountPath ?? null,
+    mountPath: mountPathValue,
     format: project?.format ?? null,
     provider:
       details === null
@@ -211,11 +234,12 @@ async function projectStatus(
             healthy: details.providerHealthy,
             error: details.providerError,
           },
-    staging: details?.staging ?? null,
+    staging,
     lastFetchTime:
       details?.lastFetchTime === null || details === null
         ? null
         : new Date(details.lastFetchTime).toISOString(),
+    nextAction,
   };
 }
 
@@ -232,44 +256,22 @@ export async function getStatus(deps: StatusDeps = {}): Promise<StatusResult> {
 }
 
 function printHuman(status: StatusResult): void {
-  process.stdout.write(
-    `daemon: ${status.daemon.running ? "running" : "not running"}\n`,
-  );
-  if (status.daemon.version !== null) {
-    process.stdout.write(`  version: ${status.daemon.version}\n`);
-  }
-  if (status.daemon.uptimeSec !== null) {
-    process.stdout.write(`  uptime: ${status.daemon.uptimeSec}s\n`);
-  }
-
-  process.stdout.write(
-    `mount: ${status.mount.mounted ? "mounted" : "not mounted"}\n`,
-  );
-  if (status.mount.path !== null) {
-    process.stdout.write(`  path: ${status.mount.path}\n`);
-  }
-  if (status.mount.error !== null) {
-    process.stdout.write(`  error: ${status.mount.error}\n`);
-  }
-
   if (status.project === null) {
     process.stdout.write("project: not initialized\n");
+    process.stdout.write("next: run envd init\n");
+    if (!status.daemon.running) {
+      process.stdout.write(`daemon: ${status.daemon.error ?? "not running"}\n`);
+    }
+    if (!status.mount.mounted) {
+      process.stdout.write(`mount: ${status.mount.error ?? "not mounted"}\n`);
+    }
     return;
   }
 
   process.stdout.write("project: initialized\n");
   process.stdout.write(`  id: ${status.project.projectId}\n`);
   process.stdout.write(
-    `  registered: ${status.project.registered ? "yes" : "no"}\n`,
-  );
-  if (status.project.format !== null) {
-    process.stdout.write(`  format: ${status.project.format}\n`);
-  }
-  if (status.project.mountPath !== null) {
-    process.stdout.write(`  mount path: ${status.project.mountPath}\n`);
-  }
-  process.stdout.write(
-    `  symlink: ${status.project.symlinkTarget ?? "(missing)"}\n`,
+    `  active environment: ${status.project.activeEnvironment}\n`,
   );
   if (status.project.provider === null) {
     process.stdout.write("  provider: N/A\n");
@@ -299,9 +301,18 @@ function printHuman(status: StatusResult): void {
       `  staged: +${status.project.staging.added} ~${status.project.staging.modified} -${status.project.staging.deleted}\n`,
     );
   }
+  process.stdout.write(`  .env: ${status.project.linkState}\n`);
   process.stdout.write(
     `  last fetch: ${status.project.lastFetchTime ?? "N/A"}\n`,
   );
+  process.stdout.write(`next: ${status.project.nextAction}\n`);
+
+  if (!status.daemon.running) {
+    process.stdout.write(`daemon: ${status.daemon.error ?? "not running"}\n`);
+  }
+  if (!status.mount.mounted) {
+    process.stdout.write(`mount: ${status.mount.error ?? "not mounted"}\n`);
+  }
 }
 
 export function buildStatusCommand(): Command {
