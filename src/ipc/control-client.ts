@@ -17,6 +17,7 @@ export interface ControlClient {
     daemon: string;
     protocol: string;
   }>;
+  listProjects(): Promise<readonly ProjectSummary[]>;
   createProject(input: CreateProjectInput): Promise<CreateProjectResult>;
   getProject(id: string): Promise<ProjectDetail>;
   listProjectEnvironments(
@@ -76,6 +77,17 @@ export interface CreateProjectResult {
   readonly id: string;
   readonly token: string;
   readonly mountPath: string;
+}
+
+export interface ProjectSummary {
+  readonly id: string;
+  readonly path: string;
+  readonly providerInstanceId: string | null;
+  readonly activeEnvironment: string;
+  readonly format: string;
+  readonly formatConfig: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
 }
 
 export interface ProjectDetail {
@@ -721,6 +733,16 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
         "/v1/version",
         timeoutMs,
       );
+    },
+
+    async listProjects() {
+      const response = await apiGet<{ projects: readonly ProjectSummary[] }>(
+        base,
+        token,
+        "/v1/projects",
+        timeoutMs,
+      );
+      return response.projects;
     },
 
     async createProject(input) {
