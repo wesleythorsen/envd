@@ -169,7 +169,7 @@ export class ProjectRepo {
             id, token, path, provider_instance_id, active_environment, format, format_config, created_at, updated_at
           )
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `
+        `,
         )
         .run(
           project.id,
