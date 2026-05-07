@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  createKeychainAdapter,
   EncryptedFileKeychainAdapter,
   LinuxKeychainAdapter,
   MacOSSecurityKeychainAdapter,
@@ -176,11 +177,13 @@ describe("LinuxKeychainAdapter", () => {
   it("falls back to an encrypted file when secret-tool is missing", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "envd-keychain-"));
     const secretsFile = join(tempDir, "secrets.enc");
+    const keyFile = join(tempDir, "secrets.key");
     const { calls, runner } = fakeRunner([missingExecutable()]);
     const adapter = new LinuxKeychainAdapter({
       logger: silentLogger,
       runCommand: runner,
       secretsFile,
+      fallbackKeyFile: keyFile,
     });
 
     await adapter.set("svc", "acct", "secret-value");
@@ -189,6 +192,7 @@ describe("LinuxKeychainAdapter", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.command).toBe("secret-tool");
     expect(readFileSync(secretsFile, "utf8")).not.toContain("secret-value");
+    expect(existsSync(keyFile)).toBe(true);
 
     await adapter.delete("svc", "acct");
     expect(existsSync(secretsFile)).toBe(false);
@@ -205,21 +209,50 @@ describe("EncryptedFileKeychainAdapter", () => {
     }
   });
 
-  it("documents the memory-only key limitation by not reading another daemon key", async () => {
+  it("reuses a durable fallback key across daemon restarts", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "envd-keychain-"));
     const secretsFile = join(tempDir, "secrets.enc");
+    const keyFile = join(tempDir, "secrets.key");
     const firstDaemon = new EncryptedFileKeychainAdapter({
       logger: silentLogger,
       secretsFile,
+      keyFile,
     });
     await firstDaemon.set("svc", "acct", "secret-value");
 
     const nextDaemon = new EncryptedFileKeychainAdapter({
       logger: silentLogger,
       secretsFile,
+      keyFile,
     });
 
-    await expect(nextDaemon.get("svc", "acct")).resolves.toBeNull();
+    await expect(nextDaemon.get("svc", "acct")).resolves.toBe("secret-value");
     await expect(firstDaemon.get("svc", "acct")).resolves.toBe("secret-value");
+    expect(readFileSync(secretsFile, "utf8")).not.toContain("secret-value");
+    expect(readFileSync(keyFile, "utf8")).not.toContain("secret-value");
+  });
+
+  it("falls back on macOS keychain authorization failure", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "envd-keychain-"));
+    const secretsFile = join(tempDir, "secrets.enc");
+    const keyFile = join(tempDir, "secrets.key");
+    const { calls, runner } = fakeRunner([
+      fail(152, "Unable to obtain authorization for this operation."),
+    ]);
+    const adapter = createKeychainAdapter({
+      platform: "darwin",
+      logger: silentLogger,
+      runCommand: runner,
+      secretsFile,
+      fallbackKeyFile: keyFile,
+    });
+
+    await adapter.set("svc", "acct", "secret-value");
+
+    await expect(adapter.get("svc", "acct")).resolves.toBe("secret-value");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.command).toBe("/bin/sh");
+    expect(existsSync(secretsFile)).toBe(true);
+    expect(readFileSync(secretsFile, "utf8")).not.toContain("secret-value");
   });
 });

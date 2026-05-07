@@ -5,6 +5,7 @@ import {
   randomBytes as nodeRandomBytes,
 } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -45,6 +46,7 @@ interface KeychainOptions {
   readonly platform?: NodeJS.Platform;
   readonly logger?: Logger;
   readonly secretsFile?: string;
+  readonly fallbackKeyFile?: string;
   readonly runCommand?: CommandRunner;
 }
 
@@ -67,6 +69,10 @@ function errorCode(err: unknown): string | undefined {
 
 function defaultSecretsFile(): string {
   return join(stateDir(), "secrets.enc");
+}
+
+function defaultFallbackKeyFile(): string {
+  return join(stateDir(), "secrets.key");
 }
 
 function mapKey(service: string, account: string): string {
@@ -313,6 +319,7 @@ export class LinuxKeychainAdapter implements KeychainAdapter {
   private readonly logger: Logger;
   private readonly runCommand: CommandRunner;
   private readonly secretsFile: string;
+  private readonly fallbackKeyFile: string;
   private readonly fallbackRandomBytes: RandomBytes;
   private delegatePromise: Promise<KeychainAdapter> | undefined;
 
@@ -320,6 +327,7 @@ export class LinuxKeychainAdapter implements KeychainAdapter {
     this.logger = opts.logger ?? log;
     this.runCommand = opts.runCommand ?? spawnCommandRunner;
     this.secretsFile = opts.secretsFile ?? defaultSecretsFile();
+    this.fallbackKeyFile = opts.fallbackKeyFile ?? defaultFallbackKeyFile();
     this.fallbackRandomBytes = nodeRandomBytes;
   }
 
@@ -364,6 +372,7 @@ export class LinuxKeychainAdapter implements KeychainAdapter {
     return new EncryptedFileKeychainAdapter({
       logger: this.logger,
       secretsFile: this.secretsFile,
+      keyFile: this.fallbackKeyFile,
       randomBytes: this.fallbackRandomBytes,
     });
   }
@@ -372,7 +381,22 @@ export class LinuxKeychainAdapter implements KeychainAdapter {
 interface EncryptedFileKeychainOptions {
   readonly logger?: Logger;
   readonly secretsFile?: string;
+  readonly keyFile?: string;
   readonly randomBytes?: RandomBytes;
+}
+
+function encryptedFileKeychainOptions(
+  opts: KeychainOptions,
+): EncryptedFileKeychainOptions {
+  return {
+    ...(opts.logger === undefined ? {} : { logger: opts.logger }),
+    ...(opts.secretsFile === undefined
+      ? {}
+      : { secretsFile: opts.secretsFile }),
+    ...(opts.fallbackKeyFile === undefined
+      ? {}
+      : { keyFile: opts.fallbackKeyFile }),
+  };
 }
 
 interface EncryptedPayload {
@@ -386,6 +410,7 @@ interface EncryptedPayload {
 export class EncryptedFileKeychainAdapter implements KeychainAdapter {
   private readonly logger: Logger;
   private readonly secretsFile: string;
+  private readonly keyFile: string;
   private readonly randomBytes: RandomBytes;
   private readonly key: Buffer;
   private reportedReadFailure = false;
@@ -393,11 +418,12 @@ export class EncryptedFileKeychainAdapter implements KeychainAdapter {
   constructor(opts: EncryptedFileKeychainOptions = {}) {
     this.logger = opts.logger ?? log;
     this.secretsFile = opts.secretsFile ?? defaultSecretsFile();
+    this.keyFile = opts.keyFile ?? defaultFallbackKeyFile();
     this.randomBytes = opts.randomBytes ?? nodeRandomBytes;
-    this.key = this.randomBytes(32);
+    this.key = this.loadOrCreateKey();
     this.logger.warn({
-      msg: "Using encrypted file keychain fallback; fallback key is memory-only, so credentials must be re-entered after daemon restart",
-      data: { path: this.secretsFile },
+      msg: "Using encrypted file keychain fallback",
+      data: { path: this.secretsFile, keyPath: this.keyFile },
     });
   }
 
@@ -448,7 +474,7 @@ export class EncryptedFileKeychainAdapter implements KeychainAdapter {
       if (!this.reportedReadFailure) {
         this.reportedReadFailure = true;
         this.logger.warn({
-          msg: "Encrypted file keychain fallback could not read existing secrets; the memory-only fallback key does not survive daemon restarts",
+          msg: "Encrypted file keychain fallback could not read existing secrets",
           data: { path: this.secretsFile, error: String(err) },
         });
       }
@@ -485,6 +511,119 @@ export class EncryptedFileKeychainAdapter implements KeychainAdapter {
       mode: 0o600,
     });
     renameSync(tmpPath, this.secretsFile);
+  }
+
+  private loadOrCreateKey(): Buffer {
+    if (existsSync(this.keyFile)) {
+      const key = Buffer.from(
+        readFileSync(this.keyFile, "utf8").trim(),
+        "base64",
+      );
+      if (key.length !== 32) {
+        throw new EnvdError("encrypted file keychain key is invalid", {
+          code: "internal",
+          details: { path: this.keyFile },
+        });
+      }
+      return key;
+    }
+
+    mkdirSync(dirname(this.keyFile), { recursive: true });
+    const key = this.randomBytes(32);
+    try {
+      writeFileSync(this.keyFile, `${key.toString("base64")}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+        flag: "wx",
+      });
+      return key;
+    } catch (err: unknown) {
+      if (errorCode(err) !== "EEXIST") {
+        throw err;
+      }
+      const existingKey = Buffer.from(
+        readFileSync(this.keyFile, "utf8").trim(),
+        "base64",
+      );
+      if (existingKey.length !== 32) {
+        throw new EnvdError("encrypted file keychain key is invalid", {
+          code: "internal",
+          details: { path: this.keyFile },
+        });
+      }
+      return existingKey;
+    }
+  }
+}
+
+export class FallbackKeychainAdapter implements KeychainAdapter {
+  private readonly primary: KeychainAdapter;
+  private readonly createFallback: () => KeychainAdapter;
+  private readonly logger: Logger;
+  private fallback: KeychainAdapter | undefined;
+  private fallbackActive = false;
+
+  constructor(
+    primary: KeychainAdapter,
+    createFallback: () => KeychainAdapter,
+    logger: Logger = log,
+  ) {
+    this.primary = primary;
+    this.createFallback = createFallback;
+    this.logger = logger;
+  }
+
+  async set(service: string, account: string, secret: string): Promise<void> {
+    if (!this.fallbackActive) {
+      try {
+        await this.primary.set(service, account, secret);
+        return;
+      } catch (err: unknown) {
+        this.activateFallback(err);
+      }
+    }
+    await this.fallbackAdapter().set(service, account, secret);
+  }
+
+  async get(service: string, account: string): Promise<string | null> {
+    if (!this.fallbackActive) {
+      try {
+        const primaryValue = await this.primary.get(service, account);
+        if (primaryValue !== null) {
+          return primaryValue;
+        }
+      } catch (err: unknown) {
+        this.activateFallback(err);
+      }
+    }
+    return this.fallbackAdapter().get(service, account);
+  }
+
+  async delete(service: string, account: string): Promise<void> {
+    if (!this.fallbackActive) {
+      try {
+        await this.primary.delete(service, account);
+      } catch (err: unknown) {
+        this.activateFallback(err);
+      }
+    }
+    await this.fallbackAdapter().delete(service, account);
+  }
+
+  private activateFallback(err: unknown): void {
+    if (this.fallbackActive) {
+      return;
+    }
+    this.fallbackActive = true;
+    this.logger.warn({
+      msg: "OS keychain is unavailable; using encrypted file keychain fallback",
+      data: { error: String(err) },
+    });
+  }
+
+  private fallbackAdapter(): KeychainAdapter {
+    this.fallback ??= this.createFallback();
+    return this.fallback;
   }
 }
 
@@ -527,14 +666,25 @@ export function createKeychainAdapter(
   opts: KeychainOptions = {},
 ): KeychainAdapter {
   if (process.env[KEYCHAIN_BACKEND_ENV_VAR] === "file") {
-    return new EncryptedFileKeychainAdapter(opts);
+    return new EncryptedFileKeychainAdapter(encryptedFileKeychainOptions(opts));
   }
 
   const platform = opts.platform ?? process.platform;
   switch (platform) {
     case "darwin":
-      return new MacOSSecurityKeychainAdapter(
-        opts.runCommand ?? spawnCommandRunner,
+      return new FallbackKeychainAdapter(
+        new MacOSSecurityKeychainAdapter(opts.runCommand ?? spawnCommandRunner),
+        () =>
+          new EncryptedFileKeychainAdapter({
+            logger: opts.logger ?? log,
+            ...(opts.secretsFile === undefined
+              ? {}
+              : { secretsFile: opts.secretsFile }),
+            ...(opts.fallbackKeyFile === undefined
+              ? {}
+              : { keyFile: opts.fallbackKeyFile }),
+          }),
+        opts.logger ?? log,
       );
     case "linux":
       return new LinuxKeychainAdapter(opts);

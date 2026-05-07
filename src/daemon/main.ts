@@ -159,6 +159,30 @@ function cleanupFiles(): void {
   rmSync(portsFile(), { force: true });
 }
 
+function formatFatalError(err: unknown): string {
+  if (err instanceof Error) {
+    return `${err.name}: ${err.message}`;
+  }
+  return String(err);
+}
+
+function writeFatalStartupLog(err: unknown): void {
+  try {
+    const logSink = new RotatingFileLogSink(daemonLogFile());
+    logSink.write(
+      `${JSON.stringify({
+        ts: new Date().toISOString(),
+        level: "error",
+        scope: "daemon",
+        msg: "envdd fatal",
+        data: { error: formatFatalError(err) },
+      })}\n`,
+    );
+  } catch {
+    // If the log path itself is broken, stderr is still the source of truth.
+  }
+}
+
 async function main(): Promise<void> {
   ensureStateDir();
   ensureRuntimeDir();
@@ -266,6 +290,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
-  process.stderr.write(`envdd fatal: ${String(err)}\n`);
+  writeFatalStartupLog(err);
+  process.stderr.write(`envdd fatal: ${formatFatalError(err)}\n`);
   process.exit(1);
 });
