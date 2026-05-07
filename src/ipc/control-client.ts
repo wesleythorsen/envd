@@ -176,6 +176,7 @@ export interface ProjectPullResult {
 
 export interface ProjectEnvironmentValuesOptions {
   readonly environment?: string;
+  readonly includeStaging?: boolean;
 }
 
 export interface ProjectEnvironmentValuesResult {
@@ -934,6 +935,9 @@ export function readProjectEnvironmentValues(
   const params = new URLSearchParams();
   if (opts?.environment !== undefined) {
     params.set("environment", opts.environment);
+  }
+  if (opts?.includeStaging === false) {
+    params.set("staged", "false");
   }
   const query = params.size === 0 ? "" : `?${params.toString()}`;
   return apiGet<ProjectEnvironmentValuesResult>(

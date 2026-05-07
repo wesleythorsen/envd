@@ -519,6 +519,15 @@ function requestIncludesValues(req: IncomingMessage): boolean {
   }
 }
 
+function requestIncludesStaging(req: IncomingMessage): boolean {
+  try {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    return url.searchParams.get("staged") !== "false";
+  } catch {
+    return true;
+  }
+}
+
 function requestEnvironment(req: IncomingMessage): string | undefined {
   try {
     const value = new URL(req.url ?? "/", "http://localhost").searchParams.get(
@@ -850,7 +859,9 @@ async function handleGetProjectEnvironmentValues(
     requestEnvironment(req),
   );
   const environment = projectEnvironment.name;
-  const desired = staging.getDesired(id, environment);
+  const desired = requestIncludesStaging(req)
+    ? staging.getDesired(id, environment)
+    : undefined;
   const values =
     desired === undefined
       ? (
