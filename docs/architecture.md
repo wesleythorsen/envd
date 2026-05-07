@@ -19,8 +19,8 @@
 ┌────────────────────────────┐         │              │                         │
 │ envd (CLI, short-lived)   │ ──────► │  ┌─ Control HTTP API (127.0.0.1) ──┐  │
 │                            │ ◄────── │  │  /v1/projects, /v1/providers,   │  │
-│  init / status / diff /    │         │  │  /v1/diff, /v1/commit, /v1/pull │  │
-│  commit / pull / provider  │         │  └──────────────┬──────────────────┘  │
+│  init / use / run / status │         │  │  /v1/diff, /v1/commit, /v1/pull │  │
+│  diff / commit / browse    │         │  └──────────────┬──────────────────┘  │
 └────────────────────────────┘         │                 ▼                      │
                                        │        ┌─ Provider plugins ─┐          │
                                        │        │  doppler / aws /   │          │
@@ -37,6 +37,7 @@
 - Short-lived Node process. Single binary entry: `bin/envd`.
 - Talks to the daemon over the **control HTTP API** for all stateful operations.
 - The CLI never speaks to providers directly. It never reads or writes the state store directly. That keeps the daemon the single source of truth.
+- Normal commands perform invisible preflight: they health-check or auto-start the daemon, and ensure the mount only when the command needs file access. `envd doctor`, `envd daemon`, and `envd status --full` expose the machinery for diagnostics.
 - Commands are defined in `src/cli/`. Parsing via `commander` (or similar). Output formatted as human-readable by default, `--json` for scripting.
 
 ### 2. Daemon — `envdd`
@@ -61,6 +62,15 @@
 - The project ID is generated at init time. Project metadata is not written to the repository. The mapping from canonical project root to project ID, provider instance/org, provider project, active environment, and display defaults lives in the user-level envd TOML config.
 - **Per-project access token**: the path can optionally include a URL-safe token (e.g. `/p/<project-id>.<token>/.env`) so another local process can't enumerate `/p/` and read secrets. The symlink embeds the token; the daemon rejects requests with a wrong token. This is a v1 hardening — still only defense-in-depth, since loopback + file permissions are the main trust boundary.
 
+### 4.1 Environment-aware project model
+
+- A provider type is the implementation (`envd`, `local-file`, `doppler`, etc.).
+- A provider instance is the org/account/workspace boundary, such as `personal` or `my-work`.
+- A project maps to one deployed service/application.
+- A project environment maps to a provider-side environment/config, such as Doppler `-c dev`.
+- Staging, cache keys, provider reads, `envd use`, `envd run`, `envd diff`, `envd commit`, and `envd pull` are scoped by `(project, environment)`.
+- Switching the active environment changes the rendered `.env` view but does not discard staged changes in other environments.
+
 ### 5. Local config, state, cache, and runtime layout
 
 - Editable config:
@@ -83,8 +93,10 @@
 
 A provider is any module implementing a small interface (details in [extension-points.md](extension-points.md)). For v1 we ship:
 
+- **`envd`** — built-in encrypted local provider used for first-run `personal` provider instances.
 - **`local-file`** — reads/writes a JSON file on disk. Used for tests, demos, and offline dev.
 - **`doppler`** — calls the Doppler API.
+- **`bitwarden-secret-manager`** and **`aws-secrets-manager`** — optional external provider integrations.
 
 Adding AWS Secrets Manager, Vault, or our own provider later is an additive change: implement the interface, register it, done.
 
@@ -95,8 +107,8 @@ Adding AWS Secrets Manager, Vault, or our own provider later is an additive chan
 1. App opens `./.env`. Symlink resolves to `<envd-mount>/p/<id>.<tok>/.env`.
 2. macOS issues a `PROPFIND` then `GET` to the daemon's WebDAV server.
 3. Daemon authenticates the path (project id + token), loads the project record.
-4. Daemon asks the configured provider for the latest secrets. If a fresh-enough cached snapshot exists (TTL, default 60s), use that. Otherwise fetch.
-5. Daemon applies any **staged changes** layered on top of the provider snapshot (so the developer sees their unpushed edits in-place).
+4. Daemon resolves the active project environment and asks the configured provider instance for that provider-side environment/config. If a fresh-enough cached snapshot exists (TTL, default 60s), use that. Otherwise fetch.
+5. Daemon applies any **staged changes** for that project environment layered on top of the provider snapshot (so the developer sees their unpushed edits in-place).
 6. Daemon renders `.env` text from the merged `(remote, staged)` map using the project's format config (quoting style, var naming, ordering).
 7. Daemon responds with the bytes. Records a read event for logs/metrics.
 
@@ -106,7 +118,7 @@ Adding AWS Secrets Manager, Vault, or our own provider later is an additive chan
 2. Daemon parses the incoming `.env` bytes into a key→value map.
 3. Daemon diffs against `(provider-snapshot merged with previous staging)`:
    - Additions, modifications, deletions all captured as **staged changes**.
-4. Staged changes are persisted in SQLite (per-project). **No push to the provider happens here.**
+4. Staged changes are persisted in SQLite (per-project and per-environment). **No push to the provider happens here.**
 5. Next read returns the merged view, so the developer sees their edit immediately.
 6. `envd diff` prints the staged delta against the remote.
 7. `envd commit` pushes staged changes to the provider, clears the staging, and refreshes the cache.

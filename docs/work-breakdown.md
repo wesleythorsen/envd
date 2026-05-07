@@ -67,6 +67,8 @@ Approved redesign story order:
 9. UX-8.1 and UX-8.2 — README and canonical docs.
 10. UX-7.2 — deferred local browser surface after the CLI redesign is stable.
 
+The detailed UX redesign acceptance criteria live in [ux-redesign-stories.md](ux-redesign-stories.md). The implementation track should be considered complete for the core CLI redesign when UX-8.1 and UX-8.2 are committed; UX-7.2 remains intentionally deferred until the CLI surfaces are stable.
+
 ---
 
 ## Wave 0 — Scaffolding (M0)

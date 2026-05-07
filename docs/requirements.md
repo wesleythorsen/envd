@@ -61,12 +61,16 @@ The tool from [vision.md](vision.md): a virtual `.env` file backed by a pluggabl
 - **1.6 Current state is inspectable in one command**
   - 1.6.1 The developer can see active environment, provider health, staged changes by environment, upstream freshness, `.env` link state, and next suggested action.
   - 1.6.2 Daemon and mount diagnostics remain available without dominating the default status view.
+  - 1.6.3 A doctor command can diagnose daemon, token, mount, project registration, `.env` link, provider health, migration, and stale runtime-file issues without revealing secret values.
+  - 1.6.4 Safe repairs can be applied explicitly; destructive repairs require confirmation or force.
 
 - **1.7 Environments are first-class**
   - 1.7.1 A project can have multiple named environments/configs.
   - 1.7.2 The developer can switch the active environment interactively or by name.
   - 1.7.3 Switching environments preserves uncommitted changes in other environments.
   - 1.7.4 A command can run with a named environment without changing the project-global active environment.
+  - 1.7.5 The developer can browse provider instances, projects, environments, and keys from the CLI.
+  - 1.7.6 Browse output hides values unless the developer explicitly requests reveal.
 
 ### 2. Extensibility (scope-relevant today, even if code is future)
 
@@ -165,12 +169,14 @@ The tool from [vision.md](vision.md): a virtual `.env` file backed by a pluggabl
 ### 7. Developer experience
 
 - **7.1 Install → working state in under five minutes**
-  - 7.1.1 Documented happy path from `npm i -g` to a rendered `.env`.
+  - 7.1.1 Documented happy path from install to `envd init`, `envd use`, `envd status`, and `envd run`.
 
 - **7.2 Discoverability**
   - 7.2.1 `--help` / built-in help covers every command with examples.
   - 7.2.2 Errors include actionable next steps, not just a code.
   - 7.2.3 Support-process details are hidden from the happy path and exposed through advanced diagnostics.
+  - 7.2.4 First-run local provider behavior is explained in user-facing docs.
+  - 7.2.5 Provider instances/orgs are explained as the grouping boundary for personal, work, client, or team secrets.
 
 - **7.3 Scriptable**
   - 7.3.1 Every command supports a JSON output mode.

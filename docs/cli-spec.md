@@ -55,6 +55,8 @@ Switch the active project environment.
 
 - With no argument, opens an interactive environment selector.
 - With an argument, switches directly.
+- `--create` creates the environment if it does not exist.
+- `--provider-environment <name>` maps the envd environment to a provider-side config/environment name when creating.
 - Updates both project active-environment state and the managed `.env` view.
 - Preserves uncommitted changes for other environments.
 - Refuses unknown environments unless `--create` is provided.
@@ -81,6 +83,8 @@ Print the current project's workflow state:
 - Next suggested action.
 
 Daemon and mount details are collapsed unless unhealthy. Use `envd status --full` or `envd daemon status` for process diagnostics.
+
+`--full` includes daemon pid/version/uptime, discovered ports, mount path, project registration, provider details, staging details, and last fetch time.
 
 ### `envd diff [environment]`
 
@@ -124,11 +128,17 @@ Return a project to ordinary env files.
 
 ### `envd browse`
 
-Read-only CLI/TUI browser for projects, environments, and keys. Values require explicit reveal. Non-TTY mode prints a table or JSON.
+Read-only CLI/TUI browser for projects, environments, and keys.
+
+- Outside an initialized project, lists configured provider instances/orgs and known local project registrations.
+- Inside an initialized project, lists environments and key counts.
+- `envd browse <environment>` lists keys for one environment.
+- Values are hidden by default; `--reveal` is required to include values.
+- Non-TTY mode prints a table or JSON.
 
 ### `envd doctor`
 
-Diagnose daemon, control token, mount, project registration, `.env` symlink, provider health, migrations, and stale runtime files. `--fix` attempts safe repairs; destructive repairs require confirmation or `--force`.
+Diagnose daemon, control token, mount, project registration, `.env` symlink, provider health, migrations, and stale runtime files. `--fix` attempts safe repairs such as removing stale runtime files or relinking managed `.env` symlinks. Destructive repairs require confirmation or `--force`.
 
 ### `envd daemon <subcommand>`
 
