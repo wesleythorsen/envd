@@ -66,6 +66,22 @@ export class ProviderInstanceRepo {
       createdAt: now,
     };
 
+    const existing = this.db
+      .prepare<[string], ProviderInstanceRow>(
+        `
+        SELECT id, provider, name, config, created_at
+        FROM provider_instances
+        WHERE name = ?
+      `,
+      )
+      .get(providerInstance.name);
+    if (existing !== undefined) {
+      throw new EnvdError("provider instance name already exists", {
+        code: "usage_error",
+        details: { name: providerInstance.name },
+      });
+    }
+
     this.db
       .prepare(
         `

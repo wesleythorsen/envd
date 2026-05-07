@@ -1625,8 +1625,18 @@ async function validateProviderInstanceConfig(
     providerContext(keychain, providerInstanceId, provider.name),
     config,
   );
-  if (instance.close !== undefined) {
-    await instance.close();
+  try {
+    const testResult = await instance.test();
+    if (!testResult.ok) {
+      throw new EnvdError("provider instance test failed", {
+        code: "provider_unreachable",
+        details: { reason: testResult.reason },
+      });
+    }
+  } finally {
+    if (instance.close !== undefined) {
+      await instance.close();
+    }
   }
 }
 

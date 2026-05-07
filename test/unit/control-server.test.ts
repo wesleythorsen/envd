@@ -1184,6 +1184,56 @@ describe("/v1/providers and /v1/provider-instances", () => {
       throw new Error("expected provider instance id to be a string");
     }
 
+    const duplicateNameRes = await request(
+      `${providerBase}/v1/provider-instances`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${providerToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          provider: "local-file",
+          name: "Local secrets",
+          config: { path: join(tempDir, "other.json") },
+          credentials: {},
+        }),
+      },
+    );
+    expect(duplicateNameRes.statusCode).toBe(400);
+    const duplicateNameBody = (await duplicateNameRes.body.json()) as Record<
+      string,
+      unknown
+    >;
+    expect(
+      (duplicateNameBody["error"] as Record<string, unknown>)["message"],
+    ).toBe("provider instance name already exists");
+
+    const failedTestRes = await request(
+      `${providerBase}/v1/provider-instances`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${providerToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          provider: "local-file",
+          name: "Broken provider",
+          config: { path: join(tempDir, "missing-dir", "secrets.json") },
+          credentials: {},
+        }),
+      },
+    );
+    expect(failedTestRes.statusCode).toBe(500);
+    const failedTestBody = (await failedTestRes.body.json()) as Record<
+      string,
+      unknown
+    >;
+    expect((failedTestBody["error"] as Record<string, unknown>)["code"]).toBe(
+      "provider_unreachable",
+    );
+
     const listRes = await request(`${providerBase}/v1/provider-instances`, {
       headers: { Authorization: `Bearer ${providerToken}` },
     });

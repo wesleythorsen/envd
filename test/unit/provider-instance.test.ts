@@ -96,4 +96,20 @@ describe("ProviderInstanceRepo", () => {
       }).toThrow(EnvdError);
     });
   });
+
+  it("rejects duplicate provider instance names", () => {
+    withRepos((providerInstanceRepo) => {
+      providerInstanceRepo.create({
+        provider: "local-file",
+        name: "personal",
+      });
+
+      expect(() => {
+        providerInstanceRepo.create({
+          provider: "envd",
+          name: "personal",
+        });
+      }).toThrow(EnvdError);
+    });
+  });
 });
