@@ -1,8 +1,15 @@
 import { Command } from "commander";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type {
   ControlClient,
   CreateProjectResult,
@@ -11,6 +18,8 @@ import type {
   ProjectDetail,
 } from "../../ipc/control-client.js";
 import { EnvdError } from "../../shared/errors.js";
+import { parse as parseDotenv } from "../../core/rendering/dotenv.js";
+import type { SecretMap } from "../../providers/base.js";
 import { writeCliError } from "../error-output.js";
 import { ensureCliPreflight } from "../preflight.js";
 import { createMountAdapter } from "../../mount/index.js";
@@ -51,6 +60,7 @@ interface InitOptions {
   readonly scan?: readonly string[];
   readonly envFile?: readonly string[];
   readonly active?: string;
+  readonly deleteImportedFiles?: boolean;
 }
 
 interface InitProjectDeps {
@@ -159,6 +169,23 @@ function parseEnvFileMapping(raw: string): ExplicitEnvFileMapping {
 
 function uniqueSorted(values: Iterable<string>): readonly string[] {
   return [...new Set(values)].sort();
+}
+
+function ensureGitignoreLine(projectDir: string, line: string): void {
+  const path = join(projectDir, ".gitignore");
+  if (!existsSync(path)) {
+    writeFileSync(path, `${line}\n`, "utf-8");
+    return;
+  }
+  const raw = readFileSync(path, "utf-8");
+  const hasLine = raw
+    .split(/\r?\n/)
+    .map((candidate) => candidate.trim())
+    .some((candidate) => candidate === line);
+  if (!hasLine) {
+    const prefix = raw === "" || raw.endsWith("\n") ? "" : "\n";
+    writeFileSync(path, `${raw}${prefix}${line}\n`, "utf-8");
+  }
 }
 
 async function ensureMounted(adapter: MountAdapter): Promise<void> {
@@ -453,12 +480,102 @@ function ensureProjectEnvSymlink(
   ensureEnvSymlink(projectDir, target);
 }
 
+function importedValuesByEnvironment(
+  plan: InitAdoptionPlan,
+): Map<string, SecretMap> {
+  const valuesByEnvironment = new Map<string, SecretMap>();
+  for (const file of plan.files) {
+    const parsed = parseDotenv(readFileSync(file.path));
+    const existing = valuesByEnvironment.get(file.environment) ?? {};
+    valuesByEnvironment.set(file.environment, { ...existing, ...parsed });
+  }
+  return valuesByEnvironment;
+}
+
+async function importAdoptionPlan(
+  client: ControlClient,
+  projectId: string,
+  plan: InitAdoptionPlan,
+): Promise<void> {
+  for (const [environment, values] of importedValuesByEnvironment(plan)) {
+    await client.importProjectEnvironment(projectId, { environment, values });
+  }
+}
+
+function retiredDirName(): string {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function retiredPathFor(
+  root: string,
+  retiredRoot: string,
+  source: string,
+): string {
+  const relativePath = source.startsWith(root)
+    ? source.slice(root.length + 1)
+    : basename(source);
+  return join(retiredRoot, relativePath);
+}
+
+function retireImportedFiles(
+  projectDir: string,
+  plan: InitAdoptionPlan,
+  deleteImportedFiles: boolean,
+): void {
+  if (plan.files.length === 0) {
+    return;
+  }
+
+  ensureGitignoreLine(projectDir, ".envd-retired/");
+  const retiredRoot = join(projectDir, ".envd-retired", retiredDirName());
+  if (!deleteImportedFiles) {
+    mkdirSync(retiredRoot, { recursive: true });
+  }
+
+  const receipt = {
+    timestamp: new Date().toISOString(),
+    projectRoot: projectDir,
+    providerTarget: plan.providerTarget,
+    activeEnvironment: plan.activeEnvironment,
+    undoCommand: "envd eject --from-retired",
+    disposition: deleteImportedFiles ? "deleted" : "retired",
+    files: plan.files.map((file) => {
+      const retiredPath = retiredPathFor(projectDir, retiredRoot, file.path);
+      return {
+        originalPath: file.path,
+        retiredPath,
+        environment: file.environment,
+        keyCount: file.keyCount,
+      };
+    }),
+  };
+
+  for (const file of plan.files) {
+    if (deleteImportedFiles) {
+      unlinkSync(file.path);
+      continue;
+    }
+    const retiredPath = retiredPathFor(projectDir, retiredRoot, file.path);
+    mkdirSync(dirname(retiredPath), { recursive: true });
+    renameSync(file.path, retiredPath);
+  }
+
+  if (!deleteImportedFiles) {
+    writeFileSync(
+      join(retiredRoot, "receipt.json"),
+      `${JSON.stringify(receipt, null, 2)}\n`,
+      "utf-8",
+    );
+  }
+}
+
 async function newProjectResult(
   client: ControlClient,
   projectDir: string,
   providerInstanceId: string,
   envFiles: EnvFileDiscoveryResult,
   adoptionPlan: InitAdoptionPlan,
+  options: InitOptions,
 ): Promise<InitResult> {
   const created: CreateProjectResult = await client.createProject({
     path: projectDir,
@@ -479,6 +596,12 @@ async function newProjectResult(
       adoptionPlan.activeEnvironment,
     );
   }
+  await importAdoptionPlan(client, created.id, adoptionPlan);
+  retireImportedFiles(
+    projectDir,
+    adoptionPlan,
+    options.deleteImportedFiles === true,
+  );
   registerProject({
     id: created.id,
     root: projectDir,
@@ -955,6 +1078,7 @@ export async function initProject(
     providerInstanceId,
     envFiles,
     adoptionPlan,
+    options,
   );
 }
 
@@ -989,6 +1113,10 @@ export function buildInitCommand(): Command {
     )
     .option("--json", "JSON output")
     .option("--scan <path>", "additional env file scan path", collectOption, [])
+    .option(
+      "--delete-imported-files",
+      "delete imported env files after provider import verification",
+    )
     .option("--no-autostart", "fail instead of starting daemon/mount support")
     .action(async (path: string | undefined, opts: InitOptions) => {
       try {

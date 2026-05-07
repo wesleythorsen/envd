@@ -27,6 +27,10 @@ export interface ControlClient {
     input: CreateProjectEnvironmentInput,
   ): Promise<ProjectEnvironmentDetail>;
   setProjectActiveEnvironment(id: string, name: string): Promise<ProjectDetail>;
+  importProjectEnvironment(
+    id: string,
+    input: ProjectEnvironmentImportInput,
+  ): Promise<ProjectEnvironmentImportResult>;
   getProjectStatus(id: string): Promise<ProjectStatusDetail>;
   getProjectDiff(
     id: string,
@@ -94,6 +98,17 @@ export interface ProjectEnvironmentDetail {
 export interface CreateProjectEnvironmentInput {
   readonly name: string;
   readonly providerEnvironment?: string;
+}
+
+export interface ProjectEnvironmentImportInput {
+  readonly environment: string;
+  readonly values: Record<string, string>;
+}
+
+export interface ProjectEnvironmentImportResult {
+  readonly environment: string;
+  readonly keyCount: number;
+  readonly verified: boolean;
 }
 
 export interface ProjectStatusDetail {
@@ -729,6 +744,16 @@ export function createControlClient(opts?: ControlClientOpts): ControlClient {
         token,
         `/v1/projects/${encodeURIComponent(id)}/active-environment`,
         { name },
+        timeoutMs,
+      );
+    },
+
+    async importProjectEnvironment(id, input) {
+      return apiPostJson<ProjectEnvironmentImportResult>(
+        base,
+        token,
+        `/v1/projects/${encodeURIComponent(id)}/import`,
+        input,
         timeoutMs,
       );
     },

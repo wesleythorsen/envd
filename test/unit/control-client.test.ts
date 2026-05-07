@@ -11,7 +11,13 @@ import {
 import { EnvdError } from "../../src/shared/errors.js";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openState, type StateStore } from "../../src/core/state.js";
@@ -187,6 +193,20 @@ describe("project APIs happy path", () => {
       modified: 1,
       deleted: 1,
       total: 3,
+    });
+
+    await expect(
+      projectClient.importProjectEnvironment(created.id, {
+        environment: "stage",
+        values: { IMPORTED: "verified" },
+      }),
+    ).resolves.toEqual({
+      environment: "stage",
+      keyCount: 1,
+      verified: true,
+    });
+    expect(JSON.parse(readFileSync(providerFile, "utf-8")) as unknown).toEqual({
+      IMPORTED: "verified",
     });
   });
 });

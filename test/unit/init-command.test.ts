@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -49,6 +50,11 @@ class FakeControlClient implements ControlClient {
   activeEnvironmentChanges: Array<{
     readonly id: string;
     readonly name: string;
+  }> = [];
+  importedEnvironments: Array<{
+    readonly id: string;
+    readonly environment: string;
+    readonly values: Record<string, string>;
   }> = [];
   lastCreateProjectInput: CreateProjectInput | undefined;
   lastCreateProviderInstanceInput: CreateProviderInstanceInput | undefined;
@@ -131,6 +137,25 @@ class FakeControlClient implements ControlClient {
     }
     this.project = { ...this.project, activeEnvironment: name };
     return Promise.resolve(this.project);
+  }
+
+  importProjectEnvironment(
+    id: string,
+    input: {
+      readonly environment: string;
+      readonly values: Record<string, string>;
+    },
+  ): Promise<{ environment: string; keyCount: number; verified: true }> {
+    this.importedEnvironments.push({
+      id,
+      environment: input.environment,
+      values: input.values,
+    });
+    return Promise.resolve({
+      environment: input.environment,
+      keyCount: Object.keys(input.values).length,
+      verified: true,
+    });
   }
 
   getProjectDiff(): Promise<never> {
@@ -413,6 +438,69 @@ describe("initProject", () => {
           { name: "renamed", providerEnvironment: "renamed" },
         ],
       });
+    });
+  });
+
+  it("imports discovered env files, retires originals, and writes a receipt", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = new FakeControlClient(
+        "/Volumes/envd/p/project-1.token-1/.env",
+      );
+      const envPath = join(projectDir, ".env.dev");
+      writeFileSync(envPath, "DEV=1\nSHARED=value\n", "utf-8");
+
+      await initProject(
+        projectDir,
+        { yes: true, providerInstance: "instance-1" },
+        { client, ensureMount: false },
+      );
+
+      expect(client.importedEnvironments).toEqual([
+        {
+          id: "project-1",
+          environment: "dev",
+          values: { DEV: "1", SHARED: "value" },
+        },
+      ]);
+      expect(existsSync(envPath)).toBe(false);
+      const retiredRoots = readdirSync(join(projectDir, ".envd-retired"));
+      expect(retiredRoots).toHaveLength(1);
+      const receiptPath = join(
+        projectDir,
+        ".envd-retired",
+        retiredRoots[0] ?? "",
+        "receipt.json",
+      );
+      expect(readFileSync(receiptPath, "utf-8")).toContain(
+        "envd eject --from-retired",
+      );
+      expect(readFileSync(join(projectDir, ".gitignore"), "utf-8")).toContain(
+        ".envd-retired/",
+      );
+    });
+  });
+
+  it("deletes imported env files only after verified import when requested", async () => {
+    await withTempProject(async (projectDir) => {
+      const client = new FakeControlClient(
+        "/Volumes/envd/p/project-1.token-1/.env",
+      );
+      const envPath = join(projectDir, ".env.dev");
+      writeFileSync(envPath, "DEV=1\n", "utf-8");
+
+      await initProject(
+        projectDir,
+        {
+          yes: true,
+          providerInstance: "instance-1",
+          deleteImportedFiles: true,
+        },
+        { client, ensureMount: false },
+      );
+
+      expect(client.importedEnvironments).toHaveLength(1);
+      expect(existsSync(envPath)).toBe(false);
+      expect(existsSync(join(projectDir, ".envd-retired"))).toBe(false);
     });
   });
 

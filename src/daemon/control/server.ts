@@ -992,6 +992,44 @@ function parseProjectCommitBody(body: unknown): ParsedProjectCommitBody {
   };
 }
 
+function parseSecretMap(value: unknown): SecretMap {
+  if (!isRecord(value)) {
+    throw new EnvdError("values must be an object", { code: "usage_error" });
+  }
+  const map: Record<string, string> = {};
+  for (const [key, secretValue] of Object.entries(value)) {
+    if (typeof secretValue !== "string") {
+      throw new EnvdError("values must contain only string values", {
+        code: "usage_error",
+        details: { key },
+      });
+    }
+    map[key] = secretValue;
+  }
+  return map;
+}
+
+interface ParsedProjectImportBody {
+  readonly environment: string;
+  readonly values: SecretMap;
+}
+
+function parseProjectImportBody(body: unknown): ParsedProjectImportBody {
+  if (!isRecord(body)) {
+    throw new EnvdError("request body must be a JSON object", {
+      code: "usage_error",
+    });
+  }
+  const environment = environmentFromBody(body);
+  if (environment === undefined) {
+    throw new EnvdError("environment is required", { code: "usage_error" });
+  }
+  return {
+    environment,
+    values: parseSecretMap(body["values"]),
+  };
+}
+
 function secretValue(map: SecretMap, key: string): string | null {
   return Object.prototype.hasOwnProperty.call(map, key)
     ? (map[key] ?? null)
@@ -1291,6 +1329,86 @@ async function handleCommitProject(
   staging.clear(id, environment);
   cache.invalidate(scopedProjectKey(id, environment));
   writeJson(res, 200, { applied: result.applied, commitId: null });
+}
+
+async function handleImportProjectEnvironment(
+  req: IncomingMessage,
+  res: ServerResponse,
+  projectRepo: ProjectRepo | undefined,
+  providerInstanceRepo: ProviderInstanceRepo | undefined,
+  stagingRepo: StagingRepo | undefined,
+  keychain: KeychainAdapter | undefined,
+  cache: Cache<SecretMap>,
+  id: string,
+): Promise<void> {
+  const projects = requireProjectRepo(projectRepo);
+  const staging = requireStagingRepo(stagingRepo);
+  const project = projects.get(id);
+  if (project === undefined) {
+    writeJsonError(res, 404, "not_found", "Project not found");
+    return;
+  }
+
+  const input = parseProjectImportBody(await readJsonBody(req));
+  const projectEnvironment = resolveProjectEnvironment(
+    projects,
+    project,
+    input.environment,
+  );
+  const snapshot = await refreshProjectSecrets(
+    id,
+    projectEnvironment.name,
+    projectEnvironment.providerEnvironment,
+    project.providerInstanceId,
+    providerInstanceRepo,
+    keychain,
+    cache,
+  );
+  const changes = toChangeSet(snapshot.value, input.values);
+  if (!isEmptyChangeSet(changes)) {
+    const result = await pushProjectChanges(
+      id,
+      projectEnvironment.providerEnvironment,
+      project.providerInstanceId,
+      providerInstanceRepo,
+      keychain,
+      changes,
+    );
+    if (result.status === "conflict") {
+      writeJsonError(
+        res,
+        409,
+        "commit_conflict",
+        "Provider reported a conflict while importing values",
+        { remote: result.remote },
+      );
+      return;
+    }
+  }
+
+  const verified = await refreshProjectSecrets(
+    id,
+    projectEnvironment.name,
+    projectEnvironment.providerEnvironment,
+    project.providerInstanceId,
+    providerInstanceRepo,
+    keychain,
+    cache,
+  );
+  for (const [key, value] of Object.entries(input.values)) {
+    if (verified.value[key] !== value) {
+      throw new EnvdError("provider import verification failed", {
+        code: "provider_unreachable",
+        details: { environment: projectEnvironment.name, key },
+      });
+    }
+  }
+  staging.clear(id, projectEnvironment.name);
+  writeJson(res, 200, {
+    environment: projectEnvironment.name,
+    keyCount: Object.keys(input.values).length,
+    verified: true,
+  });
 }
 
 function handleDeleteProject(
@@ -2014,6 +2132,39 @@ function dispatch(
         req,
         res,
         projectRepo,
+        projectId,
+      ).catch((err: unknown) => {
+        writeErrorFromUnknown(res, err);
+      });
+      return;
+    }
+
+    writeJsonError(
+      res,
+      405,
+      "method_not_allowed",
+      `Method ${method} not allowed on ${path}`,
+    );
+    return;
+  }
+
+  const projectImportMatch = /^\/v1\/projects\/([^/]+)\/import$/.exec(path);
+  if (projectImportMatch !== null) {
+    const projectId = projectImportMatch[1];
+    if (projectId === undefined) {
+      writeJsonError(res, 404, "not_found", `No route for ${method} ${path}`);
+      return;
+    }
+
+    if (method === "POST") {
+      void handleImportProjectEnvironment(
+        req,
+        res,
+        projectRepo,
+        providerInstanceRepo,
+        stagingRepo,
+        keychain,
+        cache,
         projectId,
       ).catch((err: unknown) => {
         writeErrorFromUnknown(res, err);
